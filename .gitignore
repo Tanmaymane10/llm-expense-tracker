@@ -1,0 +1,31 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Secrets and private data
+.env
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+.streamlit/secrets.toml
+
+# Evaluation progress files
+eval_progress.json
+eval_results.json
+
+# Tool caches
+.pytest_cache/
+.ruff_cache/
+
+# Editors and OS
+.vscode/
+.idea/
+.DS_Store
