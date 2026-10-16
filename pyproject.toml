@@ -7,7 +7,9 @@ authors = [
     { name = "Tanmay Mane", email = "tanmaymane18@gmail.com" }
 ]
 requires-python = ">=3.10"
-dependencies = []
+dependencies = [
+    "google-genai>=2.31.0",
+]
 
 [project.scripts]
 gpprac = "gpprac:main"
