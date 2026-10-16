@@ -174,3 +174,90 @@ def test_expense_with_suicide_in_item_name_is_not_flagged(script):
         item="suicide squad movie ticket", amount_inr=300, category="entertainment")]})])
     reply = turn("suicide squad movie ticket 300")
     assert reply.startswith("Saved:") and count_rows() == 1
+
+
+# ---------------------------------------------------------------- credit-card tracking
+
+def test_credit_card_expense_saves_card_and_payment_method():
+    card_id = query(
+        "SELECT id FROM credit_cards WHERE card_name = ?",
+        ("HDFC MoneyBack",),
+    )[0][0]
+
+    core.add_expenses(
+        [good_expense(
+            item="perfume",
+            amount_inr=3924,
+            payment_method="credit_card",
+            card_name="HDFC MoneyBack",
+            spent_at="2026-10-16 14:30",
+        )],
+        "perfume 3924 using HDFC MoneyBack",
+    )
+
+    saved = query(
+        "SELECT spent_at, item, amount_inr, payment_method, card_id "
+        "FROM expenses WHERE item = ?",
+        ("perfume",),
+    )[0]
+
+    assert saved == (
+        "2026-10-16 14:30",
+        "perfume",
+        3924,
+        "credit_card",
+        card_id,
+    )
+
+
+def test_expense_without_payment_method_remains_supported():
+    core.add_expenses(
+        [good_expense(item="lunch", amount_inr=250)],
+        "lunch 250",
+    )
+
+    saved = query(
+        "SELECT payment_method, card_id FROM expenses WHERE item = ?",
+        ("lunch",),
+    )[0]
+
+    assert saved == (None, None)
+
+
+def test_unregistered_card_saves_nothing():
+    try:
+        core.add_expenses(
+            [
+                good_expense(item="chai", amount_inr=15),
+                good_expense(
+                    item="headphones",
+                    amount_inr=2000,
+                    payment_method="credit_card",
+                    card_name="Unknown Bank Card",
+                ),
+            ],
+            "chai 15 and headphones 2000",
+        )
+        assert False, "Expected an unregistered card to be rejected"
+    except ValueError as exc:
+        assert "not registered" in str(exc)
+
+    assert count_rows() == 0
+
+
+def test_invalid_payment_method_saves_nothing():
+    try:
+        core.add_expenses(
+            [
+                good_expense(
+                    item="chai",
+                    payment_method="crypto",
+                )
+            ],
+            "chai 15",
+        )
+        assert False, "Expected invalid payment method to be rejected"
+    except ValueError as exc:
+        assert "Unsupported payment method" in str(exc)
+
+    assert count_rows() == 0

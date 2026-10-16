@@ -56,3 +56,74 @@ def test_month_comparison_uses_same_number_of_days():
     insert_expense("c", 150, "food", "2026-10-03 09:00")
     mc = an.month_comparison(an.load_expenses(), date(2026, 10, 4))
     assert mc["this"] == 150 and mc["prev_same_days"] == 100
+
+
+
+def test_credit_card_spending_summarizes_each_card():
+    import core
+    import analytics as an
+
+    core.add_expenses(
+        [
+            {
+                "spent_at": "2026-10-10 12:00",
+                "item": "Perfume",
+                "amount_inr": 3924,
+                "category": "Shopping",
+                "payment_method": "credit_card",
+                "card_name": "HDFC MoneyBack",
+            },
+            {
+                "spent_at": "2026-10-11 13:00",
+                "item": "Headphones",
+                "amount_inr": 2000,
+                "category": "Shopping",
+                "payment_method": "credit_card",
+                "card_name": "SBI Cashback",
+            },
+            {
+                "spent_at": "2026-10-12 14:00",
+                "item": "Shirt",
+                "amount_inr": 1000,
+                "category": "Shopping",
+                "payment_method": "credit_card",
+                "card_name": "HDFC MoneyBack",
+            },
+        ],
+        "test credit card purchases",
+    )
+
+    df = an.load_expenses()
+    summary, transactions = an.credit_card_spending(df)
+
+    totals = dict(zip(summary["card_name"], summary["total_spend"]))
+
+    assert totals == {
+        "HDFC MoneyBack": 4924,
+        "SBI Cashback": 2000,
+    }
+    assert len(transactions) == 3
+    assert transactions.iloc[0]["item"] == "shirt"
+
+
+def test_credit_card_spending_excludes_unknown_payment_method():
+    import core
+    import analytics as an
+
+    core.add_expenses(
+        [
+            {
+                "spent_at": "2026-10-10 12:00",
+                "item": "Lunch",
+                "amount_inr": 250,
+                "category": "Food",
+            }
+        ],
+        "lunch 250",
+    )
+
+    df = an.load_expenses()
+    summary, transactions = an.credit_card_spending(df)
+
+    assert summary.empty
+    assert transactions.empty

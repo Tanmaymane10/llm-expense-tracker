@@ -129,9 +129,63 @@ def render_analytics():
         st.subheader("Biggest single expenses")
         st.dataframe(an.biggest_expenses(df), hide_index=True, width="stretch")
 
-    st.download_button("Download this period as CSV",
-                       df.drop(columns=["date", "month"]).to_csv(index=False),
-                       file_name=f"expenses_{start}_{end}.csv", mime="text/csv")
+    
+    # --- credit-card spending for the selected period
+    st.divider()
+    st.subheader("Credit-card spending")
+
+    card_summary, card_transactions = an.credit_card_spending(df)
+
+    if card_summary.empty:
+        st.info("No recorded credit-card purchases in this period.")
+    else:
+        total_card_spend = card_summary["total_spend"].sum()
+        st.metric("Total credit-card spending", f"Rs {total_card_spend:,.0f}")
+
+        st.caption("Spending by card")
+        st.dataframe(
+            card_summary.rename(
+                columns={
+                    "card_name": "Credit card",
+                    "total_spend": "Total spent (Rs)",
+                    "transactions": "Purchases",
+                }
+            ),
+            hide_index=True,
+            width="stretch",
+            column_config={
+                "Total spent (Rs)": st.column_config.NumberColumn(
+                    "Total spent (Rs)", format="%.2f"
+                ),
+            },
+        )
+
+        st.caption("Credit-card transactions")
+        transaction_columns = [
+            col for col in
+            ["spent_at", "item", "amount_inr", "card_name"]
+            if col in card_transactions.columns
+        ]
+        st.dataframe(
+            card_transactions[transaction_columns].rename(
+                columns={
+                    "spent_at": "Date",
+                    "item": "Item",
+                    "amount_inr": "Amount (Rs)",
+                    "card_name": "Credit card",
+                }
+            ),
+            hide_index=True,
+            width="stretch",
+        )
+
+    st.download_button(
+        "Download this period as CSV",
+        df.drop(columns=["date", "month"]).to_csv(index=False),
+        file_name=f"expenses_{start}_{end}.csv",
+        mime="text/csv",
+    )
+
 
 
 def render_llm_usage():

@@ -6,20 +6,39 @@ import pandas as pd
 WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
 
+
 def load_expenses() -> pd.DataFrame:
-    """Read every expense from SQLite and add helper columns."""
-    from core import get_conn  # imported here so the other functions work without core/LLM deps
+    """Read expenses and optional payment/card details from SQLite."""
+    from core import get_conn
 
     with get_conn() as conn:
         df = pd.read_sql_query(
-            "SELECT id, spent_at, item, amount_inr, category FROM expenses", conn)
+            """
+            SELECT
+                e.id,
+                e.spent_at,
+                e.item,
+                e.amount_inr,
+                e.category,
+                e.payment_method,
+                e.card_id,
+                cc.card_name
+            FROM expenses AS e
+            LEFT JOIN credit_cards AS cc
+                ON e.card_id = cc.id
+            """,
+            conn,
+        )
+
     if df.empty:
         return df
+
     df["spent_at"] = pd.to_datetime(df["spent_at"], errors="coerce")
     df = df.dropna(subset=["spent_at"]).copy()
     df["date"] = df["spent_at"].dt.normalize()
     df["month"] = df["spent_at"].dt.strftime("%Y-%m")
     return df
+
 
 
 def filter_range(df: pd.DataFrame, start: date, end: date) -> pd.DataFrame:
@@ -138,3 +157,34 @@ def llm_daily(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return pd.DataFrame({"Calls": [], "Tokens": []}, index=pd.DatetimeIndex([], name="date"))
     return df.groupby("date").agg(Calls=("id", "size"), Tokens=("total_tokens", "sum"))
+
+    
+def credit_card_spending(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Return spending totals by card and individual credit-card purchases."""
+    required = {"amount_inr", "payment_method", "card_name"}
+
+    if df.empty or not required.issubset(df.columns):
+        empty_summary = pd.DataFrame(columns=["card_name", "total_spend", "transactions"])
+        empty_transactions = df.iloc[0:0].copy()
+        return empty_summary, empty_transactions
+
+    # Only count purchases explicitly recorded as credit-card transactions.
+    card_df = df.loc[
+        df["payment_method"].eq("credit_card") & df["card_name"].notna()
+    ].copy()
+
+    if card_df.empty:
+        empty_summary = pd.DataFrame(columns=["card_name", "total_spend", "transactions"])
+        return empty_summary, card_df
+
+    summary = (
+        card_df.groupby("card_name", as_index=False)
+        .agg(
+            total_spend=("amount_inr", "sum"),
+            transactions=("id", "count"),
+        )
+        .sort_values("total_spend", ascending=False)
+        .reset_index(drop=True)
+    )
+
+    return summary, card_df.sort_values("spent_at", ascending=False)
