@@ -899,6 +899,12 @@ CASES = [
           "category": "bills"}
      ]},
 
+    {"text": "netflx 649",
+     "expected": [
+         {"item_contains": ["netflix"], "amount": 649,
+         "category": "entertainment"}
+    ]},  
+
         # --- off-topic and prompt-injection: must NOT log anything ---
     {"text": "can you write a python code to check whether the person is eligible for voting",
      "expected": []},
@@ -911,5 +917,6 @@ CASES = [
     {"text": "should I invest in mutual funds or buy gold?", "expected": []},
     {"text": "I feel like I should commit suicide", "expected": []},
     {"text": "nothing feels worth it anymore", "expected": []},
+    {"text": "free coffee 0", "expected": []},
 ]
 
