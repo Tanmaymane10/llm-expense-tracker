@@ -5,6 +5,8 @@ from datetime import date, timedelta
 import pandas as pd
 import streamlit as st
 
+from auth import require_pin
+
 import analytics as an
 from core import MAX_INPUT_CHARS, chat_turn, get_conn, init_db
 
@@ -222,6 +224,7 @@ def render_llm_usage():
 
 
 st.set_page_config(page_title="Expense Tracker", layout="wide")
+require_pin()
 init_db()
 st.title("Expense Tracker")
 

@@ -9,7 +9,20 @@ APP = str(Path(__file__).resolve().parent.parent / "app.py")
 
 
 def run_app():
-    return AppTest.from_file(APP, default_timeout=60).run()
+    at = AppTest.from_file(APP, default_timeout=60)
+    at.session_state["authed"] = True
+    return at.run()
+
+def test_pin_gate_blocks_until_correct(monkeypatch):
+    monkeypatch.setenv("APP_PIN", "123456")
+    at = AppTest.from_file(APP, default_timeout=60).run()
+    assert not at.tabs  # nothing from the app is rendered
+    at.text_input[0].set_value("000000")
+    at.button[0].click().run()
+    assert not at.tabs
+    at.text_input[0].set_value("123456")
+    at.button[0].click().run()
+    assert [t.label for t in at.tabs] == ["Chat", "Analytics", "LLM usage"]
 
 
 def test_app_loads_with_empty_database():
