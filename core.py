@@ -26,7 +26,7 @@ load_dotenv()  # must run before the os.environ reads below
 
 DB_PATH = os.environ.get("EXPENSE_DB", "expenses.db")
 # Set EXPENSE_MODEL to any model your free key can use (see Google AI Studio).
-MODEL = os.environ.get("EXPENSE_MODEL", "gemini-flash-latest")
+MODEL = os.environ.get("EXPENSE_MODEL", "gemini-3.5-flash-lite")
 # "low" (default) / "off" / "default": how much the model "thinks" before answering.
 THINKING = os.environ.get("EXPENSE_THINKING", "low").lower()
 CATEGORIES = ["food", "transport", "groceries", "shopping", "bills",

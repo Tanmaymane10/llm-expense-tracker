@@ -1,0 +1,12 @@
+[theme]
+base = "dark"
+primaryColor = "#7CFF8A"
+backgroundColor = "#04110b"
+secondaryBackgroundColor = "#0b2418"
+textColor = "#e8fff0"
+font = "sans serif"
+baseRadius = "large"
+
+[client]
+# Hides the Deploy button and developer menu for visitors of the public site.
+toolbarMode = "viewer"

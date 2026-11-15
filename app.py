@@ -2,13 +2,197 @@
 import uuid
 from datetime import date, timedelta
 
+import altair as alt
 import pandas as pd
 import streamlit as st
 
-from auth import require_pin
-
 import analytics as an
+from auth import require_pin
 from core import MAX_INPUT_CHARS, chat_turn, get_conn, init_db
+
+THEME_CSS = """
+<style>
+:root {
+  --bg-0: #04140f;
+  --bg-1: #0a2a20;
+  --glass: rgba(255, 255, 255, 0.06);
+  --glass-strong: rgba(255, 255, 255, 0.10);
+  --edge: rgba(255, 255, 255, 0.14);
+  --mint: #5eead4;
+  --lime: #b7f34a;
+  --text: #e8f5ef;
+  --muted: #8fb5a6;
+}
+.stApp {
+  background:
+    radial-gradient(900px 500px at 10% -10%, rgba(94, 234, 212, 0.18), transparent 60%),
+    radial-gradient(700px 500px at 100% 10%, rgba(183, 243, 74, 0.10), transparent 60%),
+    linear-gradient(160deg, var(--bg-1), var(--bg-0) 70%);
+  color: var(--text);
+}
+[data-testid="stHeader"] { background: transparent; }
+h1, h2, h3, h4, label, p, span, div { color: var(--text); }
+h1 { letter-spacing: 0.04em; font-weight: 700; }
+[data-testid="stCaptionContainer"], .stCaption { color: var(--muted) !important; }
+
+/* glass cards */
+[data-testid="stMetric"], [data-testid="stDataFrame"],
+[data-testid="stChatMessage"], [data-testid="stAlert"] {
+  background: var(--glass);
+  border: 1px solid var(--edge);
+  border-radius: 18px;
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  padding: 0.9rem 1.1rem;
+}
+[data-testid="stMetricValue"] { color: var(--lime); font-weight: 700; }
+[data-testid="stMetricLabel"] p { color: var(--muted); }
+[data-testid="stDataFrame"] { padding: 0.4rem; overflow: hidden; }
+
+/* chart cards */
+[data-testid="stVegaLiteChart"], [data-testid="stArrowVegaLiteChart"] {
+  background: var(--glass);
+  border: 1px solid var(--edge);
+  border-radius: 18px;
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  padding: 0.9rem 0.9rem 0.4rem 0.9rem;
+  overflow: hidden;
+}
+
+/* tabs as pills */
+.stTabs [data-baseweb="tab-list"],
+.stTabs [role="tablist"] {
+  gap: 0.5rem !important;
+  border-bottom: none !important;
+  box-shadow: none !important;
+  padding: 0.25rem 0 0.75rem 0 !important;
+}
+.stTabs [data-baseweb="tab-border"],
+.stTabs [data-baseweb="tab-highlight"] {
+  display: none !important;
+  background: transparent !important;
+  height: 0 !important;
+}
+.stTabs button[role="tab"],
+.stTabs [data-baseweb="tab"] {
+  background: var(--glass) !important;
+  border: 1px solid var(--edge) !important;
+  border-radius: 999px !important;
+  padding: 0.45rem 1.25rem !important;
+  height: auto !important;
+  min-height: 0 !important;
+  margin: 0 !important;
+  color: var(--muted) !important;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.stTabs button[role="tab"] p,
+.stTabs [data-baseweb="tab"] p { color: inherit !important; margin: 0 !important; }
+.stTabs button[role="tab"]:hover { border-color: var(--mint) !important; }
+.stTabs button[role="tab"][aria-selected="true"] {
+  background: rgba(94, 234, 212, 0.16) !important;
+  border: 1px solid var(--mint) !important;
+  color: var(--mint) !important;
+  font-weight: 600;
+}
+
+/* period radio as pills */
+div[role="radiogroup"] { gap: 0.4rem; flex-wrap: wrap; }
+div[role="radiogroup"] label {
+  background: var(--glass);
+  border: 1px solid var(--edge);
+  border-radius: 999px;
+  padding: 0.2rem 0.9rem;
+}
+
+/* inputs and buttons */
+[data-testid="stChatInput"] {
+  background: var(--glass-strong);
+  border: 1px solid var(--edge);
+  border-radius: 18px;
+}
+.stButton > button, .stDownloadButton > button,
+[data-testid="stBaseButton-secondary"], [data-testid="stBaseButton-primary"] {
+  background: rgba(94, 234, 212, 0.10) !important;
+  border: 1px solid var(--mint) !important;
+  border-radius: 999px !important;
+  padding: 0.5rem 1.4rem !important;
+  color: var(--mint) !important;
+  font-weight: 600 !important;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.stButton > button *, .stDownloadButton > button *,
+[data-testid="stBaseButton-secondary"] *, [data-testid="stBaseButton-primary"] * {
+  color: inherit !important;
+  font-weight: inherit !important;
+}
+.stButton > button:hover, .stDownloadButton > button:hover,
+[data-testid="stBaseButton-secondary"]:hover, [data-testid="stBaseButton-primary"]:hover {
+  background: var(--mint) !important;
+  color: #04140f !important;
+}
+.stButton > button:focus-visible, .stDownloadButton > button:focus-visible {
+  outline: 2px solid var(--lime) !important;
+  outline-offset: 2px;
+}
+hr { border-color: var(--edge); }
+
+@media (max-width: 640px) {
+  .block-container { padding: 1rem 0.8rem; }
+}
+</style>
+"""
+
+
+# ---- chart helpers: transparent background, soft grid, green palette
+MINT, LIME, MUTED, GRID = "#5eead4", "#b7f34a", "#8fb5a6", "rgba(255,255,255,0.07)"
+
+
+def _style(chart):
+    return (chart.configure(background="transparent")
+            .configure_view(stroke=None, fill="transparent")
+            .configure_axis(domain=False, ticks=False, gridColor=GRID, labelColor=MUTED,
+                            titleColor=MUTED, labelFontSize=12, labelPadding=6)
+            .configure_legend(labelColor=MUTED, titleColor=MUTED, orient="top",
+                              symbolType="stroke", title=None, labelFontSize=12))
+
+
+def glass_line_chart(df: pd.DataFrame):
+    """df: datetime index, one column per series. Daily gets a soft area under it."""
+    long = (df.rename_axis("date").reset_index()
+            .melt("date", var_name="series", value_name="Rs"))
+    names = list(df.columns)
+    colors = [LIME, MINT, "#7dd3fc"][:len(names)]
+    color = alt.Color("series:N", scale=alt.Scale(domain=names, range=colors), title=None)
+    x = alt.X("date:T", title=None, axis=alt.Axis(format="%d %b", grid=False, tickCount=7),
+              scale=alt.Scale(nice=False))
+    y = alt.Y("Rs:Q", title=None, scale=alt.Scale(domainMin=0, nice=True),
+              axis=alt.Axis(format="~s"))
+    base = alt.Chart(long).encode(x=x, y=y, color=color)
+    area = (alt.Chart(long[long["series"] == names[0]])
+            .mark_area(opacity=0.15, interpolate="monotone", color=colors[0])
+            .encode(x=x, y=y))
+    lines = base.mark_line(strokeWidth=2.5, interpolate="monotone")
+    return _style((area + lines).properties(height=280))
+
+
+def glass_bar_chart(df: pd.DataFrame, color: str = MINT):
+    """df: one value column, index = labels (text or dates). Keeps the row order."""
+    col = df.columns[0]
+    labels = df.index
+    if pd.api.types.is_datetime64_any_dtype(labels):
+        labels = labels.strftime("%d %b")
+    labels = [str(lbl).split(" ", 1)[1] if str(lbl)[:1].isdigit() and " " in str(lbl)
+              and str(lbl).split(" ", 1)[0].isdigit() else str(lbl) for lbl in labels]
+    data = pd.DataFrame({"label": labels, "value": df[col].to_numpy()})
+    chart = (alt.Chart(data)
+             .mark_bar(cornerRadiusTopLeft=6, cornerRadiusTopRight=6, color=color, size=22)
+             .encode(x=alt.X("label:N", sort=None, title=None,
+                             axis=alt.Axis(labelAngle=0, grid=False)),
+                     y=alt.Y("value:Q", title=None, axis=alt.Axis(format="~s")),
+                     tooltip=["label", alt.Tooltip("value:Q", format=",.0f", title=col)])
+             .properties(height=240))
+    return _style(chart)
 
 
 def render_chat():
@@ -99,7 +283,8 @@ def render_analytics():
 
     # --- daily trend
     st.subheader("Daily spending")
-    st.line_chart(an.daily_series(df, start, end))
+    st.altair_chart(glass_line_chart(an.daily_series(df, start, end)),
+                    width="stretch", theme=None)
 
     left, right = st.columns(2)
     with left:
@@ -115,7 +300,8 @@ def render_analytics():
             })
     with right:
         st.subheader("Monthly totals")
-        st.bar_chart(an.monthly_trend(df_all))
+        st.altair_chart(glass_bar_chart(an.monthly_trend(df_all)),
+                        width="stretch", theme=None)
 
     left, right = st.columns(2)
     with left:
@@ -124,14 +310,14 @@ def render_analytics():
         m1, m2 = st.columns(2)
         m1.metric("Weekday avg / day", f"Rs {w['weekday_avg']:,.0f}")
         m2.metric("Weekend avg / day", f"Rs {w['weekend_avg']:,.0f}")
-        st.bar_chart(an.by_weekday(df, start, end))
+        st.altair_chart(glass_bar_chart(an.by_weekday(df, start, end), LIME),
+                        width="stretch", theme=None)
     with right:
         st.subheader("Top items")
         st.dataframe(an.top_items(df), hide_index=True, width="stretch")
         st.subheader("Biggest single expenses")
         st.dataframe(an.biggest_expenses(df), hide_index=True, width="stretch")
 
-    
     # --- credit-card spending for the selected period
     st.divider()
     st.subheader("Credit-card spending")
@@ -189,7 +375,6 @@ def render_analytics():
     )
 
 
-
 def render_llm_usage():
     include_eval = st.checkbox("Include evaluation runs", value=False)
     df = an.load_llm_calls(include_eval)
@@ -209,10 +394,11 @@ def render_llm_usage():
     left, right = st.columns(2)
     with left:
         st.subheader("Calls per day")
-        st.bar_chart(daily[["Calls"]])
+        st.altair_chart(glass_bar_chart(daily[["Calls"]]), width="stretch", theme=None)
     with right:
         st.subheader("Tokens per day")
-        st.bar_chart(daily[["Tokens"]])
+        st.altair_chart(glass_bar_chart(daily[["Tokens"]], LIME),
+                        width="stretch", theme=None)
 
     st.subheader("Recent errors")
     errors = (df[df["status"] != "ok"].sort_values("ts", ascending=False).head(10)
@@ -223,10 +409,11 @@ def render_llm_usage():
         st.dataframe(errors, hide_index=True, width="stretch")
 
 
-st.set_page_config(page_title="Expense Tracker", layout="wide")
+st.set_page_config(page_title="QORVIAN", layout="wide")
+st.markdown(THEME_CSS, unsafe_allow_html=True)
 require_pin()
 init_db()
-st.title("Expense Tracker")
+st.title("QORVIAN")
 
 tab_chat, tab_stats, tab_llm = st.tabs(["Chat", "Analytics", "LLM usage"])
 with tab_chat:
