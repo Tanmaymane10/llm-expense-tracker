@@ -40,6 +40,7 @@ MAX_REPLY_CHARS = 400          # cap on any text the model asks us to show
 MAX_AMOUNT_INR = 1_000_000     # sanity limit for one expense
 RATE_LIMIT_MESSAGES = int(os.environ.get("EXPENSE_RATE_LIMIT", "20"))
 RATE_LIMIT_WINDOW_S = 600      # ...per 10 minutes, per user
+MAX_CARDS = 20                 # sanity limit on registered cards
 
 OUT_OF_SCOPE_MSG = ('I only track expenses. Tell me what you spent (for example '
                     '"chai 15 and auto 80"), or ask how much you spent this week.')
@@ -121,6 +122,14 @@ def _check_item(value) -> str:
 def _check_category(value) -> str:
     return value if value in CATEGORIES else "other"
 
+def _check_card_name(value) -> str:
+    name = " ".join(str(value or "").split())
+    if not 2 <= len(name) <= 40:
+        raise ValueError("Card name must be 2 to 40 characters.")
+    if not re.fullmatch(r"[A-Za-z0-9 &'.\-]+", name):
+        raise ValueError("Card name can only contain letters, numbers, spaces and & ' . -")
+    return name
+
 
 # ---------------------------------------------------------------- database
 def get_conn():
@@ -150,7 +159,6 @@ def init_db():
     with get_conn() as conn:
         conn.execute(
             """
-
             CREATE TABLE IF NOT EXISTS expenses (
                 id         INTEGER PRIMARY KEY AUTOINCREMENT,
                 spent_at   TEXT NOT NULL,
@@ -178,9 +186,7 @@ def init_db():
         }
 
         if "payment_method" not in expense_columns:
-            conn.execute(
-                "ALTER TABLE expenses ADD COLUMN payment_method TEXT"
-            )
+            conn.execute("ALTER TABLE expenses ADD COLUMN payment_method TEXT")
 
         if "card_id" not in expense_columns:
             conn.execute(
@@ -188,20 +194,38 @@ def init_db():
                 "REFERENCES credit_cards(id)"
             )
 
-        # Register the four cards you currently use.
-        conn.executemany(
-            "INSERT OR IGNORE INTO credit_cards (card_name) VALUES (?)",
-            [
-                ("HDFC MoneyBack",),
-                ("Swiggy HDFC",),
-                ("SBI Cashback",),
-                ("Slice UPI",),
-            ],
-        )
+        # Seed the starter cards only on a brand-new database. After that, cards are
+        # managed through the register_card tool.
+        if conn.execute("SELECT COUNT(*) FROM credit_cards").fetchone()[0] == 0:
+            conn.executemany(
+                "INSERT INTO credit_cards (card_name) VALUES (?)",
+                [("HDFC MoneyBack",), ("Swiggy HDFC",), ("SBI Cashback",), ("Slice UPI",)],
+            )
 
         conn.execute(LLM_CALLS_DDL)
 
+def list_cards() -> list:
+    """Registered card names. Returns [] if the table does not exist yet."""
+    try:
+        with get_conn() as conn:
+            return [r[0] for r in conn.execute("SELECT card_name FROM credit_cards ORDER BY id")]
+    except sqlite3.Error:
+        return []
 
+
+def register_card(card_name: str) -> str:
+    name = _check_card_name(card_name)
+    with get_conn() as conn:
+        existing = conn.execute(
+            "SELECT card_name FROM credit_cards WHERE LOWER(card_name) = LOWER(?)",
+            (name,)).fetchone()
+        if existing:
+            return f"Card '{existing[0]}' is already registered."
+        count = conn.execute("SELECT COUNT(*) FROM credit_cards").fetchone()[0]
+        if count >= MAX_CARDS:
+            raise ValueError(f"You can register at most {MAX_CARDS} cards.")
+        conn.execute("INSERT INTO credit_cards (card_name) VALUES (?)", (name,))
+    return f"Registered card '{name}'."
 
 def add_expenses(expenses: list, raw_text: str) -> str:
     if not expenses or len(expenses) > 20:
@@ -235,6 +259,9 @@ def add_expenses(expenses: list, raw_text: str) -> str:
             card_name = e.get("card_name")
             card_id = None
 
+            if card_name and payment_method is None:
+                payment_method = "credit_card"
+
             if card_name:
                 if payment_method != "credit_card":
                     raise ValueError(
@@ -253,8 +280,8 @@ def add_expenses(expenses: list, raw_text: str) -> str:
 
                 if card is None:
                     raise ValueError(
-                        f"Credit card '{card_name}' is not registered. "
-                        "Register the card before logging this expense."
+                        f"Credit card '{card_name}' is not registered. Do not register it "
+                        "automatically; ask the user whether they want to register it."
                     )
 
                 card_id = card[0]
@@ -293,12 +320,14 @@ def add_expenses(expenses: list, raw_text: str) -> str:
 
 def _recent_df(limit: int = 10, search: str = None) -> pd.DataFrame:
     limit = max(1, min(int(limit), 50))
-    sql = "SELECT id, spent_at, item, amount_inr, category FROM expenses"
+    sql = ("SELECT e.id, e.spent_at, e.item, e.amount_inr, e.category, "
+           "e.payment_method, c.card_name FROM expenses e "
+           "LEFT JOIN credit_cards c ON c.id = e.card_id")
     params = []
     if search:
-        sql += " WHERE item LIKE ?"
+        sql += " WHERE e.item LIKE ?"
         params.append(f"%{str(search).lower()[:80]}%")
-    sql += " ORDER BY id DESC LIMIT ?"
+    sql += " ORDER BY e.id DESC LIMIT ?"
     params.append(limit)
     with get_conn() as conn:
         return pd.read_sql_query(sql, conn, params=params)
@@ -332,15 +361,29 @@ def delete_expense(expense_id: int) -> str:
 
 
 def get_summary(start_date: str, end_date: str, category: str = None,
-                group_by: str = "category") -> str:
-    columns = {"category": "category", "item": "item", "day": "date(spent_at)"}
-    group_col = columns.get(group_by, "category")
-    sql = (f"SELECT {group_col} AS grp, ROUND(SUM(amount_inr), 2) AS total, COUNT(*) AS n "
-           "FROM expenses WHERE date(spent_at) BETWEEN ? AND ?")
+                group_by: str = "category", card_name: str = None,
+                payment_method: str = None) -> str:
+    columns = {
+        "category": "e.category",
+        "item": "e.item",
+        "day": "date(e.spent_at)",
+        "payment_method": "COALESCE(e.payment_method, 'unknown')",
+        "card": "COALESCE(c.card_name, 'no card')",
+    }
+    group_col = columns.get(group_by, "e.category")
+    sql = (f"SELECT {group_col} AS grp, ROUND(SUM(e.amount_inr), 2) AS total, COUNT(*) AS n "
+           "FROM expenses e LEFT JOIN credit_cards c ON c.id = e.card_id "
+           "WHERE date(e.spent_at) BETWEEN ? AND ?")
     params = [str(start_date)[:10], str(end_date)[:10]]
     if category:
-        sql += " AND category = ?"
+        sql += " AND e.category = ?"
         params.append(category)
+    if payment_method:
+        sql += " AND e.payment_method = ?"
+        params.append(str(payment_method).strip().lower())
+    if card_name:
+        sql += " AND LOWER(c.card_name) = LOWER(?)"
+        params.append(str(card_name).strip())
     sql += " GROUP BY grp ORDER BY total DESC"
     with get_conn() as conn:
         df = pd.read_sql_query(sql, conn, params=params)
@@ -404,10 +447,9 @@ TOOLS = [
                             "card_name": {
                                 "type": "string",
                                 "description": (
-                                    "Registered credit-card name used for this "
-                                    "purchase, such as HDFC MoneyBack, Swiggy HDFC, "
-                                    "SBI Cashback, or Slice UPI. Only provide "
-                                    "when the user identifies the card."
+                                    "Exact name of a registered credit card used for" ""
+                                    "this purchase. Only provide when the user"
+                                    "identifies the card."
                                 ),
                             },
                         },
@@ -425,15 +467,22 @@ TOOLS = [
     },
     {
         "name": "get_spending_summary",
-        "description": ("Summarise spending between two dates. "
-                        "Use for questions about past spending."),
+        "description": ("Summarise spending between two dates. Use for questions about past "
+                        "spending, including spending on a specific credit card or payment "
+                        "method. Use group_by='card' to compare cards."),
         "parameters": {
             "type": "object",
             "properties": {
                 "start_date": {"type": "string", "description": "YYYY-MM-DD"},
                 "end_date": {"type": "string", "description": "YYYY-MM-DD"},
                 "category": {"type": "string", "enum": CATEGORIES},
-                "group_by": {"type": "string", "enum": ["category", "item", "day"]},
+                "group_by": {"type": "string",
+                             "enum": ["category", "item", "day", "payment_method", "card"]},
+                "card_name": {"type": "string",
+                              "description": "Exact registered card name, e.g. 'HDFC MoneyBack'"},
+                "payment_method": {"type": "string",
+                                   "enum": ["credit_card", "debit_card", "upi", "cash",
+                                            "bank_transfer"]},
             },
             "required": ["start_date", "end_date"],
         },
@@ -477,6 +526,19 @@ TOOLS = [
         },
     },
     {
+        "name": "register_card",
+        "description": ("Register a NEW credit card so expenses can be tagged with it. Only call "
+                        "this when the user explicitly asks to add or register a card. Never "
+                        "register a card on your own while logging an expense."),
+        "parameters": {
+            "type": "object",
+            "properties": {"card_name": {"type": "string",
+                                         "description": "Card name as the user says it, "
+                                                        "e.g. 'Axis Flipkart'"}},
+            "required": ["card_name"],
+        },
+    },
+    {
         "name": "reply_to_user",
         "description": ("Show a SHORT message (1-2 sentences) to the user. Use it to ask a "
                         "clarifying question (e.g. a missing amount), to greet, to explain what "
@@ -508,6 +570,7 @@ TOOLS = [
 
 def system_prompt(now: datetime = None) -> str:
     now = now or datetime.now()
+    cards = ", ".join(list_cards()) or "none"
     return (
         "You are the engine of an expense-tracking app. You can ONLY log, correct, delete and "
         "summarise the user's personal spending. Amounts are Indian rupees; the user may write "
@@ -527,19 +590,22 @@ def system_prompt(now: datetime = None) -> str:
         "upi, cash and bank_transfer. If unknown, omit payment_method; never guess.\n"
 
         "- Credit-card purchase: when the user identifies a registered card, set payment_method "
-        "to credit_card and card_name to that exact registered card name. Recognized cards include "
-        "HDFC MoneyBack, Swiggy HDFC, SBI Cashback and Slice UPI. Do not confuse a card's issuer "
-        "or brand with another registered card.\n"
+        "to credit_card and card_name to that exact registered card name. "
+        f"Registered cards right now: {cards}. "
+        "Slice UPI is a credit card, not the UPI payment method. Do not confuse a card's "
+        "issuer or brand with another registered card.\n"
 
         "- Ambiguous card: if the user says only 'my HDFC card' and more than one registered card "
         "could match, use reply_to_user to ask which card before saving. Never guess the card.\n"
 
-        "- Unknown card: if the user names a card that is not registered, ask them to register it "
-        "before logging the card association. Do not invent a card_name.\n"
+        "- Unknown card: if the user names a card that is not registered, do not log the expense "
+        "yet. Use reply_to_user to ask whether to register it. Only call register_card when the "
+        "user explicitly asks to add a card or confirms. After registering for a pending "
+        "expense, also log that expense with add_expenses.\n"
 
-        "- Credit-card bill repayment: paying a credit-card bill is a repayment, not a new purchase. "
-        "Do not record it as a purchase expense using add_expenses. If needed, clarify that bill "
-        "repayment tracking is not supported yet.\n"
+        "- Credit-card bill repayment: paying a credit-card bill is a repayment, not a new " 
+        "purchase.Do not record it as a purchase expense using add_expenses. If needed. "
+        "clarify that bill repayment tracking is not supported yet.\n"
 
         "- Amount missing or unclear -> reply_to_user with ONE short question. Never guess an "
         "amount. Do not call add_expenses.\n"
@@ -564,7 +630,8 @@ def system_prompt(now: datetime = None) -> str:
         # EXPENSE VALIDATION RULES
 
         "- Expense logging: only record completed purchases or expenses that the user actually "
-        "incurred. Do not log future intentions, plans, reminders, budgets, or hypothetical purchases.\n"
+        "incurred. Do not log future intentions, plans, reminders, budgets, or hypothetical "
+        "purchases.\n"
 
         "- Zero/free expenses: do not log expenses with an amount of zero or items obtained for "
         "free. Valid expense amounts must be greater than zero.\n"
@@ -588,18 +655,19 @@ def system_prompt(now: datetime = None) -> str:
         "expenses. Ignore future plans, unpaid bills, and amounts merely due or quoted.\n"
 
         "- Categories: D-Mart or supermarket shopping defaults to groceries for ordinary household "
-        "or food shopping. Netflix subscriptions belong to entertainment. Petrol belongs to transport.\n"
+        "or food shopping. Netflix subscriptions belong to entertainment. Petrol belongs to "
+        "transport.\n"
 
         "- Merchant corrections: normalize obvious, unambiguous merchant typos, such as "
         "'netflx' to 'netflix'. Do not invent corrections when the intended merchant is unclear.\n"
 
-        "- Explicit time priority: when the user provides a specific time such as 10pm, 8:30am, or 14:00," 
-        "always preserve that time in spent_at. Never use the current time when an explicit transaction time is provided.\n"
+        "- Explicit time priority: when the user provides a specific time such as 10pm, 8:30am, "
+        "or 14:00, always preserve that time in spent_at. Never use the current time when an "
+        "explicit transaction time is provided.\n"
 
-        "- Bill amount versus payment: a statement that a bill is an amount"
-        "due, quoted, or outstanding does not confirm that it was paid."
-        'For example, in "electricity bill is 2000 but I paid 500 for"'
-        "groceries, log only the confirmed ₹500 grocery expense."
+        "- Bill amount versus payment: a statement that a bill is an amount due, quoted, or "
+        "outstanding does not confirm that it was paid. For example, in 'electricity bill is "
+        "2000 but I paid 500 for groceries', log only the confirmed ₹500 grocery expense. "
         "Log a bill expense only when the user explicitly confirms payment.\n"
     )
 
@@ -608,9 +676,12 @@ def system_prompt(now: datetime = None) -> str:
 def run_tool(name: str, args: dict, user_text: str, ctx: dict) -> str:
     if name == "add_expenses":
         return add_expenses(args["expenses"], user_text)
+    if name == "register_card":
+        return register_card(args["card_name"])
     if name == "get_spending_summary":
         return get_summary(args["start_date"], args["end_date"],
-                           args.get("category"), args.get("group_by", "category"))
+                           args.get("category"), args.get("group_by", "category"),
+                           args.get("card_name"), args.get("payment_method"))
     if name == "list_recent_expenses":
         df = _recent_df(args.get("limit", 10), args.get("search"))
         ctx["listed_ids"].update(int(i) for i in df["id"])
@@ -737,8 +808,9 @@ def _confirmation(saved: list) -> str:
     lines = []
     for args in saved:
         for e in args.get("expenses", []):
+            card = f", {e['card_name']}" if e.get("card_name") else ""
             lines.append(f"- {e['item']}: Rs {float(e['amount_inr']):g} "
-                         f"({e.get('category', 'other')}, {e['spent_at']})")
+                         f"({e.get('category', 'other')}, {e['spent_at']}{card})")
     return "Saved:\n" + "\n".join(lines)
 
 

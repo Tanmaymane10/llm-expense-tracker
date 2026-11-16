@@ -60,8 +60,8 @@ def test_month_comparison_uses_same_number_of_days():
 
 
 def test_credit_card_spending_summarizes_each_card():
-    import core
     import analytics as an
+    import core
 
     core.add_expenses(
         [
@@ -96,7 +96,7 @@ def test_credit_card_spending_summarizes_each_card():
     df = an.load_expenses()
     summary, transactions = an.credit_card_spending(df)
 
-    totals = dict(zip(summary["card_name"], summary["total_spend"]))
+    totals = dict(zip(summary["card_name"], summary["total_spend"], strict=True))
 
     assert totals == {
         "HDFC MoneyBack": 4924,
@@ -107,8 +107,8 @@ def test_credit_card_spending_summarizes_each_card():
 
 
 def test_credit_card_spending_excludes_unknown_payment_method():
-    import core
     import analytics as an
+    import core
 
     core.add_expenses(
         [

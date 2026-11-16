@@ -4,7 +4,7 @@ Run the parser against eval_cases.py and report accuracy.
 
     uv run python eval.py
     uv run python eval.py --case "cab at 10pm 500"
-    uv run python eval.py --case "cab at 10pm 500" --case "electricity bill is 2000 but I paid 500 for groceries"
+    uv run python eval.py --case "cab at 10pm 500" --case "chai 15 and auto 80"
 
 Writes eval_results.json so you can track accuracy across prompt/model changes.
 """

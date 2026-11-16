@@ -1,6 +1,7 @@
 """Guardrail tests. The model is a scripted fake (some fakes misbehave on purpose)."""
 from types import SimpleNamespace
 
+import pytest
 from google.genai import errors as genai_errors
 from helpers import count_rows, good_expense, insert_expense, query, turn
 
@@ -225,7 +226,7 @@ def test_expense_without_payment_method_remains_supported():
 
 
 def test_unregistered_card_saves_nothing():
-    try:
+    with pytest.raises(ValueError, match="not registered"):
         core.add_expenses(
             [
                 good_expense(item="chai", amount_inr=15),
@@ -238,26 +239,30 @@ def test_unregistered_card_saves_nothing():
             ],
             "chai 15 and headphones 2000",
         )
-        assert False, "Expected an unregistered card to be rejected"
-    except ValueError as exc:
-        assert "not registered" in str(exc)
-
     assert count_rows() == 0
 
-
-def test_invalid_payment_method_saves_nothing():
-    try:
+def test_invalid_payment_method_is_rejected():
+    with pytest.raises(ValueError, match="Unsupported payment method"):
         core.add_expenses(
-            [
-                good_expense(
-                    item="chai",
-                    payment_method="crypto",
-                )
-            ],
+            [good_expense(item="chai", amount_inr=15, payment_method="crypto")],
             "chai 15",
         )
-        assert False, "Expected invalid payment method to be rejected"
-    except ValueError as exc:
-        assert "Unsupported payment method" in str(exc)
+    assert count_rows() == 0 
 
-    assert count_rows() == 0
+def test_register_card_and_reject_duplicates():
+    assert "Registered" in core.register_card("Axis Flipkart")
+    assert "already registered" in core.register_card("axis flipkart")
+    assert "Axis Flipkart" in core.list_cards()
+
+
+@pytest.mark.parametrize("bad", ["x", "", "<script>", "a" * 50])
+def test_register_card_rejects_bad_names(bad):
+    with pytest.raises(ValueError):
+        core.register_card(bad)
+
+
+def test_unregistered_card_expense_is_rejected(script):
+    bad = good_expense(card_name="Nope", payment_method="credit_card")
+    script([("add_expenses", {"expenses": [bad]})],
+           [("reply_to_user", {"message": "That card is not registered."})])
+    turn("chai 15 on nope card")
