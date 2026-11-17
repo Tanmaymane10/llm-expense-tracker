@@ -133,7 +133,15 @@ def _check_card_name(value) -> str:
 
 # ---------------------------------------------------------------- database
 def get_conn():
-    return sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("PRAGMA busy_timeout=5000")  # app, API and backup can touch the file at once
+    return conn
+
+
+def _add_column(conn, table: str, column: str, decl: str):
+    """Non-destructive migration: add the column only if it is missing (names are fixed strings)."""
+    if column not in {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
 
 
 LLM_CALLS_DDL = """
@@ -157,6 +165,8 @@ CREATE TABLE IF NOT EXISTS llm_calls (
 
 def init_db():
     with get_conn() as conn:
+        # WAL is stored in the file: readers (app, API, backup) never block the writer.
+        conn.execute("PRAGMA journal_mode=WAL")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS expenses (
@@ -180,19 +190,57 @@ def init_db():
             """
         )
 
-        # Safely migrate existing expenses without deleting any records.
-        expense_columns = {
-            row[1] for row in conn.execute("PRAGMA table_info(expenses)")
-        }
-
-        if "payment_method" not in expense_columns:
-            conn.execute("ALTER TABLE expenses ADD COLUMN payment_method TEXT")
-
-        if "card_id" not in expense_columns:
-            conn.execute(
-                "ALTER TABLE expenses ADD COLUMN card_id INTEGER "
-                "REFERENCES credit_cards(id)"
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS budgets (
+                category   TEXT PRIMARY KEY,   -- a CATEGORIES value or 'overall'
+                amount_inr REAL NOT NULL       -- monthly budget
             )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS income (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                received_at TEXT NOT NULL,
+                source      TEXT NOT NULL,     -- salary, freelance or other
+                amount_inr  REAL NOT NULL,
+                note        TEXT,
+                raw_text    TEXT
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS recurring (
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                item           TEXT NOT NULL,
+                amount_inr     REAL NOT NULL,
+                category       TEXT NOT NULL,
+                payment_method TEXT,
+                card_id        INTEGER REFERENCES credit_cards(id),
+                frequency      TEXT NOT NULL,                   -- monthly, yearly or weekly
+                day            INTEGER,                         -- day of month for monthly
+                start_date     TEXT NOT NULL,
+                created_on     TEXT NOT NULL,                   -- never back-fill before this
+                status         TEXT NOT NULL DEFAULT 'active',  -- active, paused or cancelled
+                last_posted_on TEXT
+            )
+            """
+        )
+
+        # Safely migrate existing tables without deleting any records.
+        _add_column(conn, "expenses", "payment_method", "TEXT")
+        _add_column(conn, "expenses", "card_id", "INTEGER REFERENCES credit_cards(id)")
+        _add_column(conn, "expenses", "recurring_id", "INTEGER REFERENCES recurring(id)")
+        _add_column(conn, "credit_cards", "statement_day", "INTEGER")
+        _add_column(conn, "credit_cards", "due_day", "INTEGER")
+        _add_column(conn, "credit_cards", "credit_limit", "REAL")
+        _add_column(conn, "credit_cards", "last_reminded_on", "TEXT")
+        _add_column(conn, "credit_cards", "paid_through", "TEXT")
+        # One posting per rule per date. NULLs are distinct, so manual expenses are unaffected.
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_expenses_recurring "
+                     "ON expenses(recurring_id, spent_at)")
 
         # Seed the starter cards only on a brand-new database. After that, cards are
         # managed through the register_card tool.

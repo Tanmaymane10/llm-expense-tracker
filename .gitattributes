@@ -1,0 +1,5 @@
+# Store and check out text files with LF everywhere (the server is Linux; systemd units break on CRLF).
+* text=auto eol=lf
+
+*.db binary
+*.gz binary
