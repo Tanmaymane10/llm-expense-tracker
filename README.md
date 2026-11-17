@@ -143,6 +143,58 @@ test_guardrails.py offline tests with a fake model
 seed_demo.py       generates fake data in a separate demo.db
 ```
 
+## Backup and restore (server)
+
+`backup.py` takes a consistent snapshot of `expenses.db` with SQLite's backup API (safe while the
+app runs), gzips it as `expenses-YYYY-MM-DD.db.gz`, uploads it with rclone to an encrypted Google
+Drive folder and keeps the newest `BACKUP_KEEP` copies. A systemd timer runs it at 02:30 IST.
+
+`.env` keys (never committed):
+
+| Variable | Example | Meaning |
+|---|---|---|
+| `BACKUP_REMOTE` | `gcrypt:expense-backups` | rclone remote to upload to |
+| `BACKUP_KEEP` | `14` | How many daily copies to keep (at least 1) |
+
+One-time setup on the VM:
+
+```bash
+sudo timedatectl set-timezone Asia/Kolkata
+sudo systemctl edit app            # add:  [Service]  Environment=TZ=Asia/Kolkata
+sudo systemctl restart app
+
+curl https://rclone.org/install.sh | sudo bash
+# On your laptop:  rclone authorize "drive"   -> copy the token
+# Run rclone config as the SAME user as the service (User= in the unit), NOT with sudo:
+# the config is saved in that user's ~/.config/rclone/, which is where the timer looks.
+rclone config      # 1) new remote "gdrive", type drive, paste the token
+                   # 2) new remote "gcrypt", type crypt, remote gdrive:expense-backups,
+                   #    let rclone generate both passwords and SAVE THEM in a password manager:
+                   #    without them the backups cannot be decrypted
+
+# Check User= and the .venv path in deploy/expense-backup.service match `systemctl cat app`
+sudo cp deploy/expense-backup.service deploy/expense-backup.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now expense-backup.timer
+
+sudo systemctl start expense-backup              # run once now
+journalctl -u expense-backup -n 20               # should end with "[backup] uploaded ..."
+rclone ls gcrypt:expense-backups
+systemctl list-timers expense-backup.timer       # next run time
+```
+
+Restore:
+
+```bash
+rclone copy gcrypt:expense-backups/expenses-YYYY-MM-DD.db.gz .
+gunzip expenses-YYYY-MM-DD.db.gz
+sqlite3 expenses-YYYY-MM-DD.db "SELECT COUNT(*) FROM expenses"   # sanity check
+sudo systemctl stop app
+mkdir -p old && mv expenses.db* old/        # also moves any -wal / -shm files
+cp expenses-YYYY-MM-DD.db expenses.db
+sudo systemctl start app
+```
+
 ## Limitations
 
 - Single user, local SQLite file; no login. Don't expose the Streamlit app to the internet as it is.

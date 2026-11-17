@@ -1,0 +1,12 @@
+[Unit]
+Description=Nightly expense DB backup to Google Drive (rclone crypt)
+
+[Service]
+Type=oneshot
+# CONFIRM ON THE SERVER: replace "ubuntu" with the user that runs the "app" service,
+# and /home/ubuntu/app/.venv with the real virtualenv path (see: systemctl cat app).
+User=ubuntu
+WorkingDirectory=/home/ubuntu/app
+EnvironmentFile=/home/ubuntu/app/.env
+Environment=TZ=Asia/Kolkata
+ExecStart=/home/ubuntu/app/.venv/bin/python backup.py
