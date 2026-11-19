@@ -1,9 +1,9 @@
 [theme]
 base = "dark"
-primaryColor = "#7CFF8A"
-backgroundColor = "#04110b"
-secondaryBackgroundColor = "#0b2418"
-textColor = "#e8fff0"
+primaryColor = "#6fd9c4"  # = --accent in app.py THEME_CSS
+backgroundColor = "#06150f"
+secondaryBackgroundColor = "#0c241c"
+textColor = "#dbe9e2"
 font = "sans serif"
 baseRadius = "large"
 

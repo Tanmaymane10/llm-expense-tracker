@@ -35,50 +35,62 @@ from core import (
 THEME_CSS = """
 <style>
 :root {
-  --bg-0: #04140f;
-  --bg-1: #0a2a20;
-  --glass: rgba(255, 255, 255, 0.06);
-  --glass-strong: rgba(255, 255, 255, 0.10);
-  --edge: rgba(255, 255, 255, 0.14);
-  --mint: #5eead4;
-  --lime: #b7f34a;
-  --text: #e8f5ef;
-  --muted: #8fb5a6;
+  --bg-0: #06150f;
+  --bg-1: #0c241c;
+  --glass: rgba(255, 255, 255, 0.045);
+  --glass-strong: rgba(255, 255, 255, 0.07);
+  --edge: rgba(255, 255, 255, 0.09);
+  --accent: #6fd9c4;
+  --accent-soft: rgba(111, 217, 196, 0.14);
+  --mint: var(--accent);  /* old name kept so every rule reads the one accent */
+  --text: #dbe9e2;
+  --muted: #8aa89c;
+  --radius: 14px;
+  --pad: 0.85rem 1rem;
 }
 .stApp {
   background:
-    radial-gradient(900px 500px at 10% -10%, rgba(94, 234, 212, 0.18), transparent 60%),
-    radial-gradient(700px 500px at 100% 10%, rgba(183, 243, 74, 0.10), transparent 60%),
-    linear-gradient(160deg, var(--bg-1), var(--bg-0) 70%);
+    radial-gradient(900px 520px at 10% -10%, rgba(111, 217, 196, 0.08), transparent 65%),
+    linear-gradient(165deg, var(--bg-1), var(--bg-0) 75%);
   color: var(--text);
 }
 [data-testid="stHeader"] { background: transparent; }
 h1, h2, h3, h4, label, p, span, div { color: var(--text); }
 h1 { letter-spacing: 0.04em; font-weight: 700; }
+h2, h3 { font-weight: 600; }
 [data-testid="stCaptionContainer"], .stCaption { color: var(--muted) !important; }
 
 /* glass cards */
 [data-testid="stMetric"], [data-testid="stDataFrame"],
-[data-testid="stChatMessage"], [data-testid="stAlert"] {
+[data-testid="stChatMessage"], [data-testid="stAlert"],
+[data-testid="stForm"] {
+  box-sizing: border-box;
+  max-width: 100%;
   background: var(--glass);
   border: 1px solid var(--edge);
-  border-radius: 18px;
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
-  padding: 0.9rem 1.1rem;
+  border-radius: var(--radius);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  padding: var(--pad);
 }
-[data-testid="stMetricValue"] { color: var(--lime); font-weight: 700; }
+[data-testid="stMetricValue"] { color: var(--text); font-weight: 600; }
 [data-testid="stMetricLabel"] p { color: var(--muted); }
-[data-testid="stDataFrame"] { padding: 0.4rem; overflow: hidden; }
+[data-testid="stDataFrame"] { padding: 0.35rem; overflow: hidden; }
+/* the alert draws its own coloured box; the glass card is just its frame */
+[data-testid="stAlert"] { padding: 0; overflow: hidden; }
+[data-testid="stAlert"] > div { border-radius: var(--radius); }
 
 /* chart cards */
 [data-testid="stVegaLiteChart"], [data-testid="stArrowVegaLiteChart"] {
+  box-sizing: border-box;
+  max-width: 100%;
   background: var(--glass);
   border: 1px solid var(--edge);
-  border-radius: 18px;
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
-  padding: 0.9rem 0.9rem 0.4rem 0.9rem;
+  border-radius: var(--radius);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  padding: var(--pad);
+  padding-bottom: 0.4rem;
   overflow: hidden;
 }
 
@@ -112,7 +124,7 @@ h1 { letter-spacing: 0.04em; font-weight: 700; }
 .stTabs [data-baseweb="tab"] p { color: inherit !important; margin: 0 !important; }
 .stTabs button[role="tab"]:hover { border-color: var(--mint) !important; }
 .stTabs button[role="tab"][aria-selected="true"] {
-  background: rgba(94, 234, 212, 0.16) !important;
+  background: var(--accent-soft) !important;
   border: 1px solid var(--mint) !important;
   color: var(--mint) !important;
   font-weight: 600;
@@ -131,11 +143,11 @@ div[role="radiogroup"] label {
 [data-testid="stChatInput"] {
   background: var(--glass-strong);
   border: 1px solid var(--edge);
-  border-radius: 18px;
+  border-radius: var(--radius);
 }
 .stButton > button, .stDownloadButton > button,
 [data-testid="stBaseButton-secondary"], [data-testid="stBaseButton-primary"] {
-  background: rgba(94, 234, 212, 0.10) !important;
+  background: var(--accent-soft) !important;
   border: 1px solid var(--mint) !important;
   border-radius: 999px !important;
   padding: 0.5rem 1.4rem !important;
@@ -150,11 +162,11 @@ div[role="radiogroup"] label {
 }
 .stButton > button:hover, .stDownloadButton > button:hover,
 [data-testid="stBaseButton-secondary"]:hover, [data-testid="stBaseButton-primary"]:hover {
-  background: var(--mint) !important;
-  color: #04140f !important;
+  background: rgba(111, 217, 196, 0.26) !important;
+  color: var(--text) !important;
 }
 .stButton > button:focus-visible, .stDownloadButton > button:focus-visible {
-  outline: 2px solid var(--lime) !important;
+  outline: 2px solid var(--accent) !important;
   outline-offset: 2px;
 }
 hr { border-color: var(--edge); }
@@ -166,8 +178,9 @@ hr { border-color: var(--edge); }
 """
 
 
-# ---- chart helpers: transparent background, soft grid, green palette
-MINT, LIME, MUTED, GRID = "#5eead4", "#b7f34a", "#8fb5a6", "rgba(255,255,255,0.07)"
+# ---- chart helpers: transparent background, soft grid, the THEME_CSS accent
+ACCENT, ACCENT_SOFT = "#6fd9c4", "rgba(111,217,196,0.45)"  # = --accent in THEME_CSS
+MUTED, GRID = "#8aa89c", "rgba(255,255,255,0.07)"
 
 
 def _style(chart):
@@ -184,7 +197,7 @@ def glass_line_chart(df: pd.DataFrame, date_format: str = "%d %b"):
     long = (df.rename_axis("date").reset_index()
             .melt("date", var_name="series", value_name="Rs"))
     names = list(df.columns)
-    colors = [LIME, MINT, "#7dd3fc"][:len(names)]
+    colors = [ACCENT, ACCENT_SOFT, MUTED][:len(names)]
     color = alt.Color("series:N", scale=alt.Scale(domain=names, range=colors), title=None)
     x = alt.X("date:T", title=None, axis=alt.Axis(format=date_format, grid=False, tickCount=7),
               scale=alt.Scale(nice=False))
@@ -201,7 +214,7 @@ def glass_line_chart(df: pd.DataFrame, date_format: str = "%d %b"):
                                                         "right": 28}))
 
 
-def glass_bar_chart(df: pd.DataFrame, color: str = MINT):
+def glass_bar_chart(df: pd.DataFrame, color: str = ACCENT):
     """df: one value column, index = labels (text or dates). Keeps the row order."""
     col = df.columns[0]
     labels = df.index
@@ -232,14 +245,16 @@ def budget_chart(df: pd.DataFrame):
     bars = alt.Chart(data).mark_bar(cornerRadiusEnd=6, size=18).encode(
         x=x, y=y,
         color=alt.Color("state:N", legend=None, scale=alt.Scale(
-            domain=["ok", "warn", "over"], range=[MINT, "#fbbf24", "#f87171"])),
+            domain=["ok", "warn", "over"], range=[ACCENT, "#fbbf24", "#f87171"])),
         tooltip=["label", alt.Tooltip("spent:Q", format=",.0f", title="Spent (Rs)"),
                  alt.Tooltip("budget:Q", format=",.0f", title="Budget (Rs)"),
                  alt.Tooltip("pct:Q", format=".0f", title="% used")])
     text = bars.mark_text(align="left", dx=6, color=MUTED).encode(text="text:N")
     limit = alt.Chart(pd.DataFrame({"pct": [100]})).mark_rule(
         color=MUTED, strokeDash=[4, 4]).encode(x="pct:Q")
-    return _style((bars + text + limit).properties(height=40 * len(data) + 20))
+    # right padding leaves room for the "Rs spent / budget" label past the longest bar
+    return _style((bars + text + limit).properties(
+        height=40 * len(data) + 20, padding={"left": 5, "top": 5, "bottom": 5, "right": 110}))
 
 
 def render_subscriptions():
@@ -348,10 +363,14 @@ def render_plan():
         c = cards[name]
         with st.form("card_form"):
             c1, c2, c3 = st.columns(3)
-            sday = c1.number_input("Statement day", 1, 31, value=c["statement_day"], step=1)
-            dday = c2.number_input("Due day", 1, 31, value=c["due_day"], step=1)
+            day_help = "The day from your statement, e.g. 15"
+            sday = c1.number_input("Statement day (1-31)", 1, 31, value=c["statement_day"],
+                                   step=1, help=day_help)
+            dday = c2.number_input("Due day (1-31)", 1, 31, value=c["due_day"], step=1,
+                                   help=day_help)
             limit = c3.number_input("Credit limit (Rs)", 1.0, float(MAX_AMOUNT_INR),
-                                    value=c["limit"], step=5000.0, format="%.0f")
+                                    value=c["limit"], step=5000.0, format="%.0f",
+                                    help="Total limit, not available limit")
             if st.form_submit_button("Save card"):
                 try:
                     st.toast(register_card(name, sday, dday, limit))
@@ -558,7 +577,7 @@ def render_analytics():
                 "total": st.column_config.NumberColumn("Total (Rs)", format="%.0f"),
                 "purchases": "Purchases",
                 "share_pct": st.column_config.ProgressColumn(
-                    "Share", format="%.0f%%", min_value=0, max_value=100),
+                    "Share", format="%.0f%%", min_value=0, max_value=100, color=ACCENT),
             })
     with right:
         st.subheader("Monthly totals")
@@ -572,7 +591,7 @@ def render_analytics():
         m1, m2 = st.columns(2)
         m1.metric("Weekday avg / day", f"Rs {w['weekday_avg']:,.0f}")
         m2.metric("Weekend avg / day", f"Rs {w['weekend_avg']:,.0f}")
-        st.altair_chart(glass_bar_chart(an.by_weekday(df, start, end), LIME),
+        st.altair_chart(glass_bar_chart(an.by_weekday(df, start, end)),
                         width="stretch", theme=None)
     with right:
         st.subheader("Top items")
@@ -644,7 +663,7 @@ def render_analytics():
                 "spent_cycle": st.column_config.NumberColumn("Spent this cycle (Rs)",
                                                              format="%.0f"),
                 "utilisation": st.column_config.ProgressColumn(
-                    "Limit used", format="%.0f%%", min_value=0, max_value=100),
+                    "Limit used", format="%.0f%%", min_value=0, max_value=100, color=ACCENT),
             })
 
     st.download_button(
@@ -677,7 +696,7 @@ def render_llm_usage():
         st.altair_chart(glass_bar_chart(daily[["Calls"]]), width="stretch", theme=None)
     with right:
         st.subheader("Tokens per day")
-        st.altair_chart(glass_bar_chart(daily[["Tokens"]], LIME),
+        st.altair_chart(glass_bar_chart(daily[["Tokens"]]),
                         width="stretch", theme=None)
 
     st.subheader("Recent errors")
