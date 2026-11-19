@@ -15,12 +15,16 @@ from core import (
     MAX_INPUT_CHARS,
     add_income,
     budget_status,
+    card_status,
     chat_turn,
     delete_income,
+    due_line,
     get_conn,
     init_db,
+    register_card,
     savings,
     set_budget,
+    set_paid_through,
 )
 
 THEME_CSS = """
@@ -254,6 +258,49 @@ def render_plan():
         st.toast(f"Saved {len(changed)} budget change(s)." if len(changed) else "No changes.")
         if len(changed):
             st.rerun()  # Analytics renders before this tab, so redraw it with the new budgets
+
+    st.subheader("Cards")
+    st.caption("Statement and due days drive the bill reminders. Leave a field empty to keep it.")
+    cards = {c["card"]: c for c in card_status()}
+    name = st.selectbox("Card", list(cards))
+    if name:
+        c = cards[name]
+        with st.form("card_form"):
+            c1, c2, c3 = st.columns(3)
+            sday = c1.number_input("Statement day", 1, 31, value=c["statement_day"], step=1)
+            dday = c2.number_input("Due day", 1, 31, value=c["due_day"], step=1)
+            limit = c3.number_input("Credit limit (Rs)", 1.0, float(MAX_AMOUNT_INR),
+                                    value=c["limit"], step=5000.0, format="%.0f")
+            if st.form_submit_button("Save card"):
+                try:
+                    st.toast(register_card(name, sday, dday, limit))
+                    st.rerun()
+                except ValueError as e:
+                    st.error(str(e))
+        if c["paid"] is False:
+            bill = (f"{c['prev_start']:%d %b}-{c['prev_end']:%d %b} "
+                    f"(Rs {c['amount_due']:,.0f})")
+            st.caption(f"Closed cycle {bill} unpaid.")
+            if st.button("Mark bill paid"):
+                st.session_state.confirm_paid = name
+            if st.session_state.get("confirm_paid") == name:
+                st.warning(f"Mark the {name} bill for {bill} as paid? "
+                           "This logs no expense or income.")
+                yes, no = st.columns(2)
+                if yes.button("Yes, mark paid", type="primary"):
+                    st.session_state.undo_paid = (name, c["id"], c["paid_through"])
+                    del st.session_state.confirm_paid
+                    st.toast(register_card(name, bill_paid=True))
+                    st.rerun()
+                if no.button("Cancel", key="cancel_paid"):
+                    del st.session_state.confirm_paid
+                    st.rerun()
+        undo = st.session_state.get("undo_paid")
+        if undo and undo[0] == name and st.button("Undo paid"):
+            set_paid_through(undo[1], undo[2])
+            del st.session_state.undo_paid
+            st.toast(f"{name}: bill marked unpaid again.")
+            st.rerun()
 
     st.subheader("Income")
     st.caption("Salary, freelance or other money received. Refunds and cashback are not income.")
@@ -496,6 +543,24 @@ def render_analytics():
             width="stretch",
         )
 
+    st.subheader("Card cycles")
+    cards = pd.DataFrame(card_status())
+    cards = cards[cards["statement_day"].notna()] if not cards.empty else cards
+    if cards.empty:
+        st.caption("Set a card's statement day in the Plan tab to see its cycle.")
+    else:
+        st.dataframe(
+            cards[["card", "amount_due", "due_date", "paid", "spent_cycle", "utilisation"]],
+            hide_index=True, width="stretch",
+            column_config={
+                "card": "Card", "paid": "Paid", "due_date": "Due",
+                "amount_due": st.column_config.NumberColumn("Amount due (Rs)", format="%.0f"),
+                "spent_cycle": st.column_config.NumberColumn("Spent this cycle (Rs)",
+                                                             format="%.0f"),
+                "utilisation": st.column_config.ProgressColumn(
+                    "Limit used", format="%.0f%%", min_value=0, max_value=100),
+            })
+
     st.download_button(
         "Download this period as CSV",
         df.drop(columns=["date", "month"]).to_csv(index=False),
@@ -543,6 +608,9 @@ st.markdown(THEME_CSS, unsafe_allow_html=True)
 require_pin()
 init_db()
 st.title("QORVIAN")
+for _card in card_status():
+    if _line := due_line(_card, date.today()):
+        st.warning(_line)
 
 tab_chat, tab_stats, tab_plan, tab_llm = st.tabs(["Chat", "Analytics", "Plan", "LLM usage"])
 with tab_chat:

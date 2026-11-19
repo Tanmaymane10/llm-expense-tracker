@@ -102,7 +102,7 @@ def test_get_status_budgets_text():
     assert "- Food: Rs 600 of Rs 1,000 (60%), Rs 400 left" in text
     assert "- Overall: Rs 600 of Rs 500 (120%), over by Rs 100" in text
     with pytest.raises(ValueError):
-        core.get_status("cards")
+        core.get_status("weather")
 
 
 def test_budget_progress_states():
