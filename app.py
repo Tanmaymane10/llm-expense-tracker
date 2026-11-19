@@ -264,8 +264,11 @@ def render_subscriptions():
     today = date.today()
     subs = subscription_status(today)
     if subs:
+        # a display string: a date column filled with "" for paused rules breaks Arrow
+        rows = [{**r, "next_due": f"{r['next_due'].day} {r['next_due']:%b %Y}"
+                 if r["next_due"] else ""} for r in subs]
         st.dataframe(
-            pd.DataFrame(subs)[["item", "amount_inr", "schedule", "next_due", "monthly",
+            pd.DataFrame(rows)[["item", "amount_inr", "schedule", "next_due", "monthly",
                                 "card_name", "status"]].fillna(""),
             hide_index=True, width="stretch",
             column_config={

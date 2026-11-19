@@ -93,6 +93,21 @@ def test_plan_subscriptions_click_through():
     assert status()[1] == "cancelled" and not at.exception
 
 
+def test_plan_renders_paused_subscription_without_arrow_fallback(monkeypatch):
+    import streamlit.dataframe_util as du
+
+    import core
+    core.manage_subscription("add", "netflix", amount_inr=649, category="entertainment", day=5)
+    core.manage_subscription("add", "gym", amount_inr=500, category="health", day=1)
+    core.manage_subscription("pause", "gym")  # paused rules have no next_due
+    fixed = []  # Streamlit only calls this after Arrow rejects a mixed-type column
+    real = du.fix_arrow_incompatible_column_types
+    monkeypatch.setattr(du, "fix_arrow_incompatible_column_types",
+                        lambda df, *a, **k: fixed.append(list(df.columns)) or real(df, *a, **k))
+    at = run_app()
+    assert not at.exception and not fixed
+
+
 def test_plan_remove_card_and_auto_tag():
     from helpers import query
 
