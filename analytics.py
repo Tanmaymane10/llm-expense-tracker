@@ -129,6 +129,30 @@ def budget_progress(today: date = None) -> pd.DataFrame:
     return df
 
 
+def load_income() -> pd.DataFrame:
+    """Income rows, newest first, with a 'month' column."""
+    from core import get_conn
+
+    with get_conn() as conn:
+        df = pd.read_sql_query("SELECT id, received_at, source, amount_inr, note FROM income "
+                               "ORDER BY received_at DESC, id DESC", conn)
+    df["received_at"] = pd.to_datetime(df["received_at"], errors="coerce")
+    df["month"] = df["received_at"].dt.strftime("%Y-%m")
+    return df
+
+
+def savings_by_month(expenses: pd.DataFrame, income: pd.DataFrame) -> pd.DataFrame:
+    """Income, Expenses (refunds net out) and Savings per month; index = month start."""
+    def per_month(df):
+        return df.groupby("month")["amount_inr"].sum() if len(df) else pd.Series(dtype=float)
+
+    out = pd.DataFrame({"Income": per_month(income),
+                        "Expenses": per_month(expenses)}).fillna(0.0).sort_index()
+    out["Savings"] = out["Income"] - out["Expenses"]
+    out.index = pd.to_datetime(out.index, format="%Y-%m")
+    return out
+
+
 # ------------------------------------------------------------------ LLM usage (observability)
 def load_llm_calls(include_eval: bool = False) -> pd.DataFrame:
     """Every recorded model call. Evaluation runs are hidden unless asked for."""

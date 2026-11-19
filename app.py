@@ -10,12 +10,16 @@ import analytics as an
 from auth import require_pin
 from core import (
     CATEGORIES,
+    INCOME_SOURCES,
     MAX_AMOUNT_INR,
     MAX_INPUT_CHARS,
+    add_income,
     budget_status,
     chat_turn,
+    delete_income,
     get_conn,
     init_db,
+    savings,
     set_budget,
 )
 
@@ -166,23 +170,26 @@ def _style(chart):
                               symbolType="stroke", title=None, labelFontSize=12))
 
 
-def glass_line_chart(df: pd.DataFrame):
-    """df: datetime index, one column per series. Daily gets a soft area under it."""
+def glass_line_chart(df: pd.DataFrame, date_format: str = "%d %b"):
+    """df: datetime index, one column per series. The first series gets a soft area under it."""
     long = (df.rename_axis("date").reset_index()
             .melt("date", var_name="series", value_name="Rs"))
     names = list(df.columns)
     colors = [LIME, MINT, "#7dd3fc"][:len(names)]
     color = alt.Color("series:N", scale=alt.Scale(domain=names, range=colors), title=None)
-    x = alt.X("date:T", title=None, axis=alt.Axis(format="%d %b", grid=False, tickCount=7),
+    x = alt.X("date:T", title=None, axis=alt.Axis(format=date_format, grid=False, tickCount=7),
               scale=alt.Scale(nice=False))
-    y = alt.Y("Rs:Q", title=None, scale=alt.Scale(domainMin=0, nice=True),
+    low = min(0.0, float(long["Rs"].min()))  # savings can go negative
+    y = alt.Y("Rs:Q", title=None, scale=alt.Scale(domainMin=low, nice=True),
               axis=alt.Axis(format="~s"))
-    base = alt.Chart(long).encode(x=x, y=y, color=color)
-    area = (alt.Chart(long[long["series"] == names[0]])
-            .mark_area(opacity=0.15, interpolate="monotone", color=colors[0])
-            .encode(x=x, y=y))
-    lines = base.mark_line(strokeWidth=2.5, interpolate="monotone")
-    return _style((area + lines).properties(height=280))
+    lines = alt.Chart(long).encode(x=x, y=y, color=color).mark_line(
+        strokeWidth=2.5, interpolate="monotone")
+    if len(names) == 1:  # a fill under one of several lines reads as that series' band
+        lines = alt.Chart(long).mark_area(opacity=0.15, interpolate="monotone",
+                                          color=colors[0]).encode(x=x, y=y) + lines
+    # right padding keeps the last x label from being cut off
+    return _style(lines.properties(height=280, padding={"left": 5, "top": 5, "bottom": 5,
+                                                        "right": 28}))
 
 
 def glass_bar_chart(df: pd.DataFrame, color: str = MINT):
@@ -247,6 +254,52 @@ def render_plan():
         st.toast(f"Saved {len(changed)} budget change(s)." if len(changed) else "No changes.")
         if len(changed):
             st.rerun()  # Analytics renders before this tab, so redraw it with the new budgets
+
+    st.subheader("Income")
+    st.caption("Salary, freelance or other money received. Refunds and cashback are not income.")
+    with st.form("income_form", clear_on_submit=True):
+        c1, c2, c3 = st.columns(3)
+        amount = c1.number_input("Amount (Rs)", min_value=0.0, max_value=float(MAX_AMOUNT_INR),
+                                 step=1000.0, format="%.0f")
+        source = c2.selectbox("Source", INCOME_SOURCES)
+        received = c3.date_input("Received on", value=date.today(), max_value=date.today())
+        note = st.text_input("Note (optional)", max_chars=80)
+        if st.form_submit_button("Add income"):
+            try:
+                st.toast(add_income(amount, source, received.isoformat(), note, "plan tab"))
+                st.rerun()
+            except ValueError as e:
+                st.error(str(e))
+
+    rows = an.load_income().head(10)
+    if rows.empty:
+        return
+    st.caption("Last 10 entries")
+    st.dataframe(rows.drop(columns="month").fillna({"note": ""}), hide_index=True,
+                 width="stretch",
+                 column_config={"id": "Id", "source": "Source", "note": "Note",
+                                "received_at": st.column_config.DatetimeColumn(
+                                    "Received", format="YYYY-MM-DD"),
+                                "amount_inr": st.column_config.NumberColumn(
+                                    "Amount (Rs)", format="%.0f")})
+    labels = {int(r.id): f"#{r.id} {r.received_at:%Y-%m-%d} {r.source} Rs {r.amount_inr:,.0f}"
+              for r in rows.itertuples()}
+    pick = st.selectbox("Delete an entry", list(labels), format_func=labels.get, index=None,
+                        placeholder="Choose an entry")
+    if pick is not None and st.button("Delete"):
+        st.session_state.confirm_income = pick
+    if st.session_state.get("confirm_income") in labels:
+        target = st.session_state.confirm_income
+        st.warning(f"Delete {labels[target]}? This cannot be undone.")
+        yes, no = st.columns(2)
+        if yes.button("Yes, delete", type="primary"):
+            delete_income(target)
+            del st.session_state.confirm_income
+            st.toast("Income entry deleted.")
+            st.rerun()
+        if no.button("Cancel"):
+            del st.session_state.confirm_income
+            st.rerun()
 
 
 def render_chat():
@@ -342,6 +395,20 @@ def render_analytics():
         st.caption("No budgets yet. Set them in the Plan tab or say \"food budget 6000\" in Chat.")
     else:
         st.altair_chart(budget_chart(budgets), width="stretch", theme=None)
+
+    # --- income and savings (per month, whatever the period above)
+    st.subheader("Income and savings")
+    s = savings(today.strftime("%Y-%m"))
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Income this month", f"Rs {s['income']:,.0f}")
+    c2.metric("Saved this month", f"Rs {s['net']:,.0f}")
+    c3.metric("Savings rate", "n/a" if s["rate"] is None else f"{s['rate']:.0f}%")
+    income = an.load_income()
+    if income.empty:
+        st.caption("No income yet. Add it in the Plan tab or say \"got salary 50000\" in Chat.")
+    else:
+        monthly = an.savings_by_month(df_all, income).tail(12)
+        st.altair_chart(glass_line_chart(monthly, "%b %Y"), width="stretch", theme=None)
 
     # --- daily trend
     st.subheader("Daily spending")
