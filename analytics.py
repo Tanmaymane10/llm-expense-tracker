@@ -108,13 +108,25 @@ def by_weekday(df: pd.DataFrame, start: date, end: date) -> pd.DataFrame:
 
 
 def top_items(df: pd.DataFrame, n: int = 10) -> pd.DataFrame:
+    df = df[df["amount_inr"] > 0]  # refunds are negative rows
     return (df.groupby("item")["amount_inr"].agg(total="sum", times="size")
             .sort_values("total", ascending=False).head(n).reset_index())
 
 
 def biggest_expenses(df: pd.DataFrame, n: int = 5) -> pd.DataFrame:
     cols = ["spent_at", "item", "amount_inr", "category"]
-    return df.sort_values("amount_inr", ascending=False).head(n)[cols]
+    return df[df["amount_inr"] > 0].sort_values("amount_inr", ascending=False).head(n)[cols]
+
+
+def budget_progress(today: date = None) -> pd.DataFrame:
+    """This month's budgets: category, budget, spent, pct, state (ok <80, warn 80-99, over)."""
+    from core import budget_status
+
+    df = pd.DataFrame(budget_status(today),
+                      columns=["category", "budget", "spent", "pct"])
+    df["state"] = pd.cut(df["pct"], [-float("inf"), 80, 100, float("inf")], right=False,
+                         labels=["ok", "warn", "over"]).astype(str)
+    return df
 
 
 # ------------------------------------------------------------------ LLM usage (observability)

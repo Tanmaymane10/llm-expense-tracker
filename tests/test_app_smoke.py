@@ -22,13 +22,13 @@ def test_pin_gate_blocks_until_correct(monkeypatch):
     assert not at.tabs
     at.text_input[0].set_value("123456")
     at.button[0].click().run()
-    assert [t.label for t in at.tabs] == ["Chat", "Analytics", "LLM usage"]
+    assert [t.label for t in at.tabs] == ["Chat", "Analytics", "Plan", "LLM usage"]
 
 
 def test_app_loads_with_empty_database():
     at = run_app()
     assert not at.exception
-    assert [t.label for t in at.tabs] == ["Chat", "Analytics", "LLM usage"]
+    assert [t.label for t in at.tabs] == ["Chat", "Analytics", "Plan", "LLM usage"]
 
 
 @pytest.mark.parametrize("period", ["This month", "Last 30 days", "Last 90 days",

@@ -8,7 +8,16 @@ import streamlit as st
 
 import analytics as an
 from auth import require_pin
-from core import MAX_INPUT_CHARS, chat_turn, get_conn, init_db
+from core import (
+    CATEGORIES,
+    MAX_AMOUNT_INR,
+    MAX_INPUT_CHARS,
+    budget_status,
+    chat_turn,
+    get_conn,
+    init_db,
+    set_budget,
+)
 
 THEME_CSS = """
 <style>
@@ -195,6 +204,51 @@ def glass_bar_chart(df: pd.DataFrame, color: str = MINT):
     return _style(chart)
 
 
+def budget_chart(df: pd.DataFrame):
+    """df from an.budget_progress(): % of each budget used, coloured by state, line at 100%."""
+    pairs = zip(df["spent"], df["budget"], strict=True)
+    data = df.assign(label=df["category"].str.capitalize(),
+                     text=[f"Rs {s:,.0f} / {b:,.0f}" for s, b in pairs])
+    y = alt.Y("label:N", sort=None, title=None, axis=alt.Axis(grid=False))
+    x = alt.X("pct:Q", title=None, axis=alt.Axis(format=".0f", labelExpr="datum.label + '%'",
+                                           tickCount=6, labelFlush=True),
+              scale=alt.Scale(domain=[0, max(100, float(data["pct"].max()) * 1.15)], nice=False))
+    bars = alt.Chart(data).mark_bar(cornerRadiusEnd=6, size=18).encode(
+        x=x, y=y,
+        color=alt.Color("state:N", legend=None, scale=alt.Scale(
+            domain=["ok", "warn", "over"], range=[MINT, "#fbbf24", "#f87171"])),
+        tooltip=["label", alt.Tooltip("spent:Q", format=",.0f", title="Spent (Rs)"),
+                 alt.Tooltip("budget:Q", format=",.0f", title="Budget (Rs)"),
+                 alt.Tooltip("pct:Q", format=".0f", title="% used")])
+    text = bars.mark_text(align="left", dx=6, color=MUTED).encode(text="text:N")
+    limit = alt.Chart(pd.DataFrame({"pct": [100]})).mark_rule(
+        color=MUTED, strokeDash=[4, 4]).encode(x="pct:Q")
+    return _style((bars + text + limit).properties(height=40 * len(data) + 20))
+
+
+def render_plan():
+    st.subheader("Monthly budgets")
+    st.caption("Leave a row at 0 for no budget. You can also say \"food budget 6000\" in Chat.")
+    current = {r["category"]: r["budget"] for r in budget_status()}
+    table = pd.DataFrame({"category": CATEGORIES + ["overall"]})
+    table["budget"] = table["category"].map(current).fillna(0.0)
+    edited = st.data_editor(
+        table, hide_index=True, width="stretch", key="budgets_editor",
+        column_config={
+            "category": st.column_config.TextColumn("Category", disabled=True),
+            "budget": st.column_config.NumberColumn("Monthly budget (Rs)", min_value=0,
+                                                    max_value=MAX_AMOUNT_INR, step=500,
+                                                    format="%.0f"),
+        })
+    if st.button("Save budgets"):
+        changed = edited[edited["budget"].fillna(0) != table["budget"]]
+        for cat, amount in zip(changed["category"], changed["budget"].fillna(0), strict=True):
+            set_budget(cat, float(amount))
+        st.toast(f"Saved {len(changed)} budget change(s)." if len(changed) else "No changes.")
+        if len(changed):
+            st.rerun()  # Analytics renders before this tab, so redraw it with the new budgets
+
+
 def render_chat():
     if "history" not in st.session_state:
         st.session_state.history = []  # plain-text turns only
@@ -280,6 +334,14 @@ def render_analytics():
         diff = mc["this"] - mc["prev_same_days"]
         st.metric("This month so far vs same days last month",
                   f"Rs {mc['this']:,.0f}", f"{diff:+,.0f} Rs", delta_color="inverse")
+
+    # --- budgets (always this month, whatever the period above)
+    st.subheader("Budgets this month")
+    budgets = an.budget_progress()
+    if budgets.empty:
+        st.caption("No budgets yet. Set them in the Plan tab or say \"food budget 6000\" in Chat.")
+    else:
+        st.altair_chart(budget_chart(budgets), width="stretch", theme=None)
 
     # --- daily trend
     st.subheader("Daily spending")
@@ -415,10 +477,12 @@ require_pin()
 init_db()
 st.title("QORVIAN")
 
-tab_chat, tab_stats, tab_llm = st.tabs(["Chat", "Analytics", "LLM usage"])
+tab_chat, tab_stats, tab_plan, tab_llm = st.tabs(["Chat", "Analytics", "Plan", "LLM usage"])
 with tab_chat:
     render_chat()
 with tab_stats:
     render_analytics()
+with tab_plan:
+    render_plan()
 with tab_llm:
     render_llm_usage()
