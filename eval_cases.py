@@ -905,6 +905,9 @@ CASES = [
          "category": "entertainment"}
     ]},  
 
+    # --- subscriptions: a rule change, never an expense ("tool" is scored from Phase 7) ---
+    {"text": "change netflix to 799", "expected": [], "tool": "manage_subscription"},
+
         # --- off-topic and prompt-injection: must NOT log anything ---
     {"text": "can you write a python code to check whether the person is eligible for voting",
      "expected": []},

@@ -1,4 +1,5 @@
 """Loads the real Streamlit app and clicks through every period option."""
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -56,6 +57,55 @@ def test_llm_usage_tab_renders_with_recorded_calls():
     assert not at.exception
     labels = [m.label for m in at.metric]
     assert "Calls today" in labels and "Success rate" in labels
+
+
+def _widget(items, label, nth=0):
+    return [w for w in items if w.label == label][nth]
+
+
+def test_plan_subscriptions_click_through():
+    from helpers import query
+
+    import core
+    core.manage_subscription("add", "netflix", amount_inr=649, category="entertainment", day=5,
+                             card_name="HDFC MoneyBack")
+    status = lambda: query("SELECT amount_inr, status, card_id FROM recurring")[0]  # noqa: E731
+    at = run_app()
+
+    # update the amount through the form (the first "Amount (Rs)" is the subscription form's)
+    _widget(at.selectbox, "Add or update").set_value("netflix").run()
+    _widget(at.number_input, "Amount (Rs)").set_value(799.0)
+    _widget(at.button, "Save subscription").click().run()
+    assert not at.exception and status() == (799.0, "active", 1)
+
+    _widget(at.button, "Pause").click().run()
+    assert status()[1] == "paused"
+    _widget(at.button, "Resume").click().run()
+    assert status()[1] == "active"
+
+    # cancel needs a confirm; "Keep it" leaves the rule alone
+    _widget(at.button, "Cancel subscription").click().run()
+    assert any("Cancel netflix?" in w.value for w in at.warning)
+    _widget(at.button, "Keep it").click().run()
+    assert status()[1] == "active" and not [b for b in at.button if b.label == "Keep it"]
+    _widget(at.button, "Cancel subscription").click().run()
+    _widget(at.button, "Yes, cancel it").click().run()
+    assert status()[1] == "cancelled" and not at.exception
+
+
+def test_plan_remove_card_and_auto_tag():
+    from helpers import query
+
+    import core
+    core.manage_subscription("add", "netflix", amount_inr=649, category="entertainment",
+                             day=date.today().day, card_name="HDFC MoneyBack")  # posts today
+    at = run_app()
+    _widget(at.selectbox, "Add or update").set_value("netflix").run()
+    _widget(at.selectbox, "Card").set_value("(remove card)")
+    _widget(at.button, "Save subscription").click().run()
+    assert query("SELECT card_id, payment_method FROM recurring") == [(None, None)]
+    recent = at.tabs[0].dataframe[0].value
+    assert list(recent["item"]) == ["netflix (auto)"]
 
 
 def test_chat_input_is_on_top_and_newest_exchange_comes_first(monkeypatch):

@@ -64,6 +64,13 @@ def main() -> int:
     if keep < 1:  # never let a bad setting delete every backup
         print("BACKUP_KEEP must be at least 1.", file=sys.stderr)
         return 1
+    # Log due subscriptions first, so the snapshot has them. Never blocks the backup, and
+    # skipped for a missing file (connecting would create an empty DB).
+    if Path(core.DB_PATH).exists():
+        try:
+            print(f"[backup] posted {core.post_due_recurring()} recurring payment(s)")
+        except sqlite3.Error as exc:
+            print(f"[backup] recurring catch-up failed: {exc}", file=sys.stderr)
 
     with tempfile.TemporaryDirectory() as tmp:
         try:

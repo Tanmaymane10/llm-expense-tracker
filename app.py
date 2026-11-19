@@ -10,6 +10,7 @@ import analytics as an
 from auth import require_pin
 from core import (
     CATEGORIES,
+    FREQUENCIES,
     INCOME_SOURCES,
     MAX_AMOUNT_INR,
     MAX_INPUT_CHARS,
@@ -21,10 +22,14 @@ from core import (
     due_line,
     get_conn,
     init_db,
+    list_cards,
+    manage_subscription,
+    post_due_recurring,
     register_card,
     savings,
     set_budget,
     set_paid_through,
+    subscription_status,
 )
 
 THEME_CSS = """
@@ -237,6 +242,80 @@ def budget_chart(df: pd.DataFrame):
     return _style((bars + text + limit).properties(height=40 * len(data) + 20))
 
 
+def render_subscriptions():
+    st.subheader("Subscriptions")
+    st.caption("Each payment is logged automatically on its due date. You can also say "
+               "\"netflix 649 every month on the 5th\" in Chat.")
+    today = date.today()
+    subs = subscription_status(today)
+    if subs:
+        st.dataframe(
+            pd.DataFrame(subs)[["item", "amount_inr", "schedule", "next_due", "monthly",
+                                "card_name", "status"]].fillna(""),
+            hide_index=True, width="stretch",
+            column_config={
+                "item": "Item", "schedule": "Renews", "next_due": "Next due",
+                "card_name": "Card", "status": "Status",
+                "amount_inr": st.column_config.NumberColumn("Amount (Rs)", format="%.0f"),
+                "monthly": st.column_config.NumberColumn("Per month (Rs)", format="%.0f"),
+            })
+    names = [r["item"] for r in subs]
+    pick = st.selectbox("Add or update", ["New subscription"] + names)
+    cur = next((r for r in subs if r["item"] == pick), None)
+    with st.form("sub_form"):
+        c1, c2, c3 = st.columns(3)
+        item = c1.text_input("Item", value=pick if cur else "", disabled=bool(cur), max_chars=80)
+        amount = c2.number_input("Amount (Rs)", 0.0, float(MAX_AMOUNT_INR), step=100.0,
+                                 value=float(cur["amount_inr"]) if cur else 0.0, format="%.0f")
+        category = c3.selectbox("Category", CATEGORIES, index=CATEGORIES.index(
+            cur["category"] if cur else "entertainment"))
+        c1, c2, c3, c4 = st.columns(4)
+        freq = c1.selectbox("Frequency", FREQUENCIES,
+                            index=FREQUENCIES.index(cur["frequency"]) if cur else 0)
+        day = c2.number_input("Day of month (monthly)", 1, 31, step=1,
+                              value=(cur and cur["day"]) or today.day)
+        start = c3.date_input("A payment date (yearly/weekly)",
+                              value=date.fromisoformat(cur["start_date"]) if cur else today)
+        has_card = bool(cur and cur["card_name"])
+        cards = ["(remove card)" if has_card else "(none)"] + list_cards()
+        card = c4.selectbox("Card", cards,
+                            index=cards.index(cur["card_name"]) if has_card else 0)
+        if st.form_submit_button("Save subscription"):
+            try:
+                st.toast(manage_subscription(
+                    "update" if cur else "add", pick if cur else item, amount_inr=amount,
+                    category=category, frequency=freq,
+                    day=day if freq == "monthly" else None,
+                    start_date=start.isoformat() if freq != "monthly" else None,
+                    card_name=None if card.startswith("(") else card,
+                    remove_card=card == "(remove card)"))
+                st.rerun()
+            except ValueError as e:
+                st.error(str(e))
+    if not subs:
+        return
+
+    target = st.selectbox("Pause, resume or cancel", names)
+    rule = next(r for r in subs if r["item"] == target)
+    b1, b2 = st.columns(2)
+    if b1.button("Pause" if rule["status"] == "active" else "Resume"):
+        st.toast(manage_subscription("pause" if rule["status"] == "active" else "resume",
+                                     target))
+        st.rerun()
+    if b2.button("Cancel subscription"):
+        st.session_state.confirm_cancel = target
+    if st.session_state.get("confirm_cancel") == target:
+        st.warning(f"Cancel {target}? No more payments are logged; past ones stay.")
+        yes, no = st.columns(2)
+        if yes.button("Yes, cancel it", type="primary"):
+            del st.session_state.confirm_cancel
+            st.toast(manage_subscription("cancel", target))
+            st.rerun()
+        if no.button("Keep it"):
+            del st.session_state.confirm_cancel
+            st.rerun()
+
+
 def render_plan():
     st.subheader("Monthly budgets")
     st.caption("Leave a row at 0 for no budget. You can also say \"food budget 6000\" in Chat.")
@@ -258,6 +337,8 @@ def render_plan():
         st.toast(f"Saved {len(changed)} budget change(s)." if len(changed) else "No changes.")
         if len(changed):
             st.rerun()  # Analytics renders before this tab, so redraw it with the new budgets
+
+    render_subscriptions()
 
     st.subheader("Cards")
     st.caption("Statement and due days drive the bill reminders. Leave a field empty to keep it.")
@@ -383,7 +464,8 @@ def render_chat():
     with data_col:
         with get_conn() as conn:
             recent = pd.read_sql_query(
-                "SELECT id, spent_at, item, amount_inr, category FROM expenses "
+                "SELECT id, spent_at, item || CASE WHEN recurring_id IS NOT NULL "
+                "THEN ' (auto)' ELSE '' END AS item, amount_inr, category FROM expenses "
                 "ORDER BY id DESC LIMIT 50", conn)
         if recent.empty:
             st.info("No expenses yet.")
@@ -430,10 +512,14 @@ def render_analytics():
     c3.metric("Purchases", k["transactions"])
     c4.metric("Top category", k["top_category"], f"Rs {k['top_category_amount']:,.0f}",
               delta_color="off")
+    c1, c2 = st.columns(2)
     if mc["has_prev"]:
         diff = mc["this"] - mc["prev_same_days"]
-        st.metric("This month so far vs same days last month",
+        c1.metric("This month so far vs same days last month",
                   f"Rs {mc['this']:,.0f}", f"{diff:+,.0f} Rs", delta_color="inverse")
+    c2.metric("Projected month-end", f"Rs {an.month_projection(df_all, today):,.0f}",
+              help="Spending pace so far this month (subscriptions excluded), plus "
+                   "subscriptions logged and still due this month.")
 
     # --- budgets (always this month, whatever the period above)
     st.subheader("Budgets this month")
@@ -607,6 +693,7 @@ st.set_page_config(page_title="QORVIAN", layout="wide")
 st.markdown(THEME_CSS, unsafe_allow_html=True)
 require_pin()
 init_db()
+post_due_recurring()
 st.title("QORVIAN")
 for _card in card_status():
     if _line := due_line(_card, date.today()):

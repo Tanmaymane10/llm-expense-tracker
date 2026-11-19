@@ -30,6 +30,7 @@ log = logging.getLogger("expense_api")
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     core.init_db()
+    core.post_due_recurring()
     yield
 
 

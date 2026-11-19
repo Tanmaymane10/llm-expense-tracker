@@ -1,5 +1,5 @@
 """Spending analytics. Pure pandas functions: easy to test, no Streamlit or LLM code in here."""
-from datetime import date
+from datetime import date, timedelta
 
 import pandas as pd
 
@@ -22,6 +22,7 @@ def load_expenses() -> pd.DataFrame:
                 e.category,
                 e.payment_method,
                 e.card_id,
+                e.recurring_id,
                 cc.card_name
             FROM expenses AS e
             LEFT JOIN credit_cards AS cc
@@ -127,6 +128,20 @@ def budget_progress(today: date = None) -> pd.DataFrame:
     df["state"] = pd.cut(df["pct"], [-float("inf"), 80, 100, float("inf")], right=False,
                          labels=["ok", "warn", "over"]).astype(str)
     return df
+
+
+def month_projection(df_all: pd.DataFrame, today: date) -> float:
+    """Month-end spend: non-recurring pace so far, plus recurring already posted, plus the
+    active subscriptions still due after today this month."""
+    from core import _month_day, due_dates, subscription_status
+
+    month = df_all[df_all["month"] == today.strftime("%Y-%m")]
+    is_rec = month["recurring_id"].notna()
+    last = _month_day(today.year, today.month, 31)
+    pace = month.loc[~is_rec, "amount_inr"].sum() / today.day * last.day
+    upcoming = sum(r["amount_inr"] * len(due_dates(r, today + timedelta(days=1), last))
+                   for r in subscription_status(today) if r["status"] == "active")
+    return float(pace + month.loc[is_rec, "amount_inr"].sum() + upcoming)
 
 
 def load_income() -> pd.DataFrame:
