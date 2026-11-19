@@ -5,6 +5,7 @@ Run the parser against eval_cases.py and report accuracy.
     uv run python eval.py
     uv run python eval.py --case "cab at 10pm 500"
     uv run python eval.py --case "cab at 10pm 500" --case "chai 15 and auto 80"
+    uv run python eval.py --only-new     # only the tool-routing cases (Phase 3-6 intents)
 
 Writes eval_results.json so you can track accuracy across prompt/model changes.
 """
@@ -17,7 +18,25 @@ from core import MODEL, extract_expenses
 from eval_cases import CASES, NOW
 
 
-def score_case(case: dict, preds: list) -> dict:
+def tool_ok(case: dict, calls: list) -> bool:
+    """"tool" must be called (with "args" a subset of its args); "not_tools" must not be."""
+    names = [name for name, _ in calls]
+    if any(t in names for t in case.get("not_tools", [])):
+        return False
+    if "tool" not in case:
+        return True
+    want = case.get("args", {})
+    return any(
+        name == case["tool"] and all(args.get(k) == v for k, v in want.items())
+        for name, args in calls
+    )
+
+
+def is_new(case: dict) -> bool:
+    return "tool" in case or "not_tools" in case
+
+
+def score_case(case: dict, preds: list, calls: list) -> dict:
     expected = case["expected"]
     used, matched = set(), []
 
@@ -55,14 +74,18 @@ def score_case(case: dict, preds: list) -> dict:
 
         date_checks.append(ok)
 
+    tool_check = tool_ok(case, calls) if is_new(case) else None
+
     passed = (
         len(matched) == len(expected) == len(preds)
         and all(cat_checks)
         and all(date_checks)
+        and tool_check is not False
     )
 
     return {
         "passed": passed,
+        "tool_check": tool_check,
         "n_expected": len(expected),
         "n_pred": len(preds),
         "n_matched": len(matched),
@@ -87,9 +110,20 @@ def main():
         help="Run only the case matching this exact input. Can be repeated.",
     )
 
+    parser.add_argument(
+        "--only-new",
+        action="store_true",
+        help='Run only the tool-routing cases (those with a "tool" or "not_tools" key).',
+    )
+
     args = parser.parse_args()
 
-    if args.selected_cases:
+    if args.selected_cases and args.only_new:
+        parser.error("Use --case or --only-new, not both.")
+
+    if args.only_new:
+        selected = [case for case in CASES if is_new(case)]
+    elif args.selected_cases:
         case_map = {case["text"]: case for case in CASES}
         missing = [text for text in args.selected_cases if text not in case_map]
 
@@ -103,13 +137,15 @@ def main():
     results = []
 
     for case in selected:
-        preds = extract_expenses(case["text"], NOW)
-        s = score_case(case, preds)
+        preds, calls = extract_expenses(case["text"], NOW)
+        s = score_case(case, preds, calls)
 
         results.append({
             "text": case["text"],
             "expected": case["expected"],
+            "expected_tool": {k: case[k] for k in ("tool", "args", "not_tools") if k in case},
             "predicted": preds,
+            "calls": calls,
             **s,
         })
 
@@ -122,6 +158,7 @@ def main():
     cat = [c for r in results for c in r["cat_checks"]]
     dat = [d for r in results for d in r["date_checks"]]
 
+    tools = [r["tool_check"] for r in results if r["tool_check"] is not None]
     passed = sum(r["passed"] for r in results)
 
     print(f"\nModel: {MODEL}")
@@ -130,6 +167,7 @@ def main():
     print(f"Item+amount precision: {pct(n_match, n_pred)}")
     print(f"Category accuracy   : {pct(sum(cat), len(cat))}")
     print(f"Date/time accuracy  : {pct(sum(dat), len(dat))}")
+    print(f"Tool routing        : {pct(sum(tools), len(tools))}")
 
     print("\nFailures:")
 
@@ -141,8 +179,9 @@ def main():
     for r in failures:
         print(
             f"- {r['text']}\n"
-            f"    expected : {r['expected']}\n"
-            f"    predicted: {r['predicted']}"
+            f"    expected : {r['expected']} {r['expected_tool'] or ''}\n"
+            f"    predicted: {r['predicted']}\n"
+            f"    calls    : {r['calls']}"
         )
 
     with open("eval_results.json", "w") as f:

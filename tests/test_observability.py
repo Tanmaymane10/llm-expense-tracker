@@ -51,7 +51,8 @@ def test_daily_quota_is_logged_with_its_own_status(monkeypatch):
 def test_evaluation_calls_are_tagged_eval(monkeypatch):
     resp = FakeResp([("add_expenses", {"expenses": [{"item": "chai"}]})], usage=usage())
     monkeypatch.setattr(core, "_client", fake_client(lambda **kw: resp))
-    assert core.extract_expenses("chai 15", datetime(2026, 10, 4, 14, 30)) == [{"item": "chai"}]
+    assert core.extract_expenses("chai 15", datetime(2026, 10, 4, 14, 30)) == (
+        [{"item": "chai"}], [("add_expenses", {"expenses": [{"item": "chai"}]})])
     assert query("SELECT purpose FROM llm_calls")[0][0] == "eval"
 
 

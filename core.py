@@ -1558,12 +1558,19 @@ def chat_turn(history: list, user_text: str, user_key: str = "default") -> str:
     return finish("Sorry, that took too many steps. Please try rephrasing.")
 
 
-def extract_expenses(text: str, now: datetime) -> list:
-    """Parsing only (no DB writes). Used by eval.py. Returns [] if the bot did not log anything."""
+def extract_expenses(text: str, now: datetime) -> tuple[list, list]:
+    """Parsing only (no DB writes). Used by eval.py.
+    Returns (expenses, calls): expenses as add_expenses would store them ([] if none),
+    calls as [(tool name, args)] for every function call in the first model turn."""
     contents = [types.Content(role="user", parts=[types.Part.from_text(text=text)])]
     resp = _generate(contents, now, purpose="eval")
-    found = []
+    found, calls = [], []
     for call in resp.function_calls or []:
+        args = dict(call.args or {})
+        calls.append((call.name, args))
         if call.name == "add_expenses":
-            found.extend((call.args or {}).get("expenses", []))
-    return found
+            for e in args.get("expenses", []):
+                if e.get("is_refund") is True:  # add_expenses stores refunds negative
+                    e = {**e, "amount_inr": -abs(float(e.get("amount_inr", 0)))}
+                found.append(e)
+    return found, calls

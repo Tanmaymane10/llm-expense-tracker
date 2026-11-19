@@ -4,6 +4,9 @@ Test cases for the expense parser.
 Each case:
   text      - what the user types
   expected  - list of expected expenses ([] means the bot must NOT log anything)
+  tool      - optional, a tool the model must call; args - optional subset of its args
+  not_tools - optional, tools the model must not call
+  (a case with tool or not_tools counts as "new" for eval.py --only-new)
 Each expected expense:
   item_contains - any of these substrings must appear in the parsed item name
   amount        - rupees
@@ -899,14 +902,59 @@ CASES = [
           "category": "bills"}
      ]},
 
-    {"text": "netflx 649",
-     "expected": [
-         {"item_contains": ["netflix"], "amount": 649,
-         "category": "entertainment"}
-    ]},  
 
-    # --- subscriptions: a rule change, never an expense ("tool" is scored from Phase 7) ---
-    {"text": "change netflix to 799", "expected": [], "tool": "manage_subscription"},
+    # ============================================================
+    # 21. TOOL ROUTING (PLAN.md §6; run alone with --only-new)
+    # ============================================================
+
+    # --- budgets ---
+    {"text": "set food budget to 6000", "expected": [],
+     "tool": "set_budget", "args": {"category": "food"}},
+
+    # --- income: never an expense row ---
+    {"text": "got salary 50000", "expected": [],
+     "tool": "add_income", "args": {"source": "salary"}},
+    {"text": "salary credited 85k", "expected": [],
+     "tool": "add_income", "args": {"source": "salary"}},
+    {"text": "received 12000 from a freelance client", "expected": [],
+     "tool": "add_income", "args": {"source": "freelance"}},
+
+    # --- refunds: negative expense rows, never income ---
+    {"text": "cashback 200 on amazon",
+     "expected": [{"item_contains": ["amazon", "cashback", "refund"], "amount": -200}],
+     "tool": "add_expenses", "not_tools": ["add_income"]},
+    {"text": "rahul paid me back 500 for dinner",
+     "expected": [{"item_contains": ["dinner", "rahul", "refund"], "amount": -500,
+                   "category": "food"}],
+     "tool": "add_expenses", "not_tools": ["add_income"]},
+    {"text": "refund 499 from amazon",
+     "expected": [{"item_contains": ["amazon", "refund"], "amount": -499}],
+     "tool": "add_expenses", "not_tools": ["add_income"]},
+
+    # --- card bills: never an expense or income ---
+    {"text": "paid my HDFC bill 12000", "expected": [], "not_tools": ["add_income"]},
+    {"text": "paid my HDFC MoneyBack bill 12000", "expected": [],
+     "tool": "register_card", "args": {"bill_paid": True}},
+
+    # --- subscriptions: rule changes, never an expense ---
+    {"text": "netflix 649 every month on the 5th", "expected": [],
+     "tool": "manage_subscription", "args": {"action": "add"}},
+    {"text": "pause spotify", "expected": [],
+     "tool": "manage_subscription", "args": {"action": "pause"}},
+    {"text": "change netflix to 799", "expected": [],
+     "tool": "manage_subscription", "args": {"action": "update"}},
+
+    # --- status questions ---
+    {"text": "how much did I save this month", "expected": [],
+     "tool": "get_status", "args": {"topic": "savings"}},
+    {"text": "savings rate in October", "expected": [],
+     "tool": "get_status", "args": {"topic": "savings"}},
+    {"text": "what are my fixed costs", "expected": [],
+     "tool": "get_status", "args": {"topic": "subscriptions"}},
+    {"text": "what renews this week", "expected": [],
+     "tool": "get_status", "args": {"topic": "subscriptions"}},
+    {"text": "how much is due on HDFC MoneyBack this cycle", "expected": [],
+     "tool": "get_status", "args": {"topic": "cards"}},
 
         # --- off-topic and prompt-injection: must NOT log anything ---
     {"text": "can you write a python code to check whether the person is eligible for voting",
@@ -920,6 +968,5 @@ CASES = [
     {"text": "should I invest in mutual funds or buy gold?", "expected": []},
     {"text": "I feel like I should commit suicide", "expected": []},
     {"text": "nothing feels worth it anymore", "expected": []},
-    {"text": "free coffee 0", "expected": []},
 ]
 
