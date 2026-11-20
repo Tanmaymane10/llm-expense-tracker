@@ -1,0 +1,11 @@
+[Unit]
+Description=Weekly spending digest to Telegram
+
+[Service]
+Type=oneshot
+# Same user and paths as expense-backup.service; confirm them on the server.
+User=ubuntu
+WorkingDirectory=/home/ubuntu/app
+EnvironmentFile=/home/ubuntu/app/.env
+Environment=TZ=Asia/Kolkata
+ExecStart=/home/ubuntu/app/.venv/bin/python weekly_digest.py
