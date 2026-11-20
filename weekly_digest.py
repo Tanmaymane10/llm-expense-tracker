@@ -38,6 +38,12 @@ def build_message(today: date = None) -> str:
         big = an.biggest_expenses(cur, 1)
         if not big.empty:
             lines.append(f"Biggest: {big.iloc[0]['item']} (Rs {big.iloc[0]['amount_inr']:,.0f})")
+        rows = list(cur.sort_values("spent_at").itertuples())
+        lines += ["", "All purchases:"]
+        lines += [f"{r.spent_at:%a %d}  {r.item}  Rs {r.amount_inr:,.0f}" for r in rows[:60]]  # Telegram caps a message at 4096 chars
+        if len(rows) > 60:
+            lines.append(f"...and {len(rows) - 60} more")
+        lines.append(f"Total: Rs {k['total']:,.0f}")
 
     risky = [b for b in core.budget_status(today) if b["pct"] >= 80]
     if risky:
