@@ -20,7 +20,7 @@ def require_pin() -> None:
         return
 
     expected = os.environ.get("APP_PIN", "")
-    st.title("Expense Tracker")
+    st.title("QORVIAN")
     if not (expected.isdigit() and len(expected) == 6):  # fail closed
         st.error("The server PIN is not configured.")
         st.stop()
