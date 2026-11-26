@@ -59,7 +59,8 @@ def test_refunds_net_out_and_month_filter_applies():
     spend(3000)
     spend(500, is_refund=True)
     core.add_expenses([good_expense(spent_at="2020-01-05 10:00", amount_inr=999)], "test")
-    assert core.savings(MONTH) == {"income": 10000, "expenses": 2500, "net": 7500, "rate": 75}
+    assert core.savings(MONTH) == {"income": 10000, "expenses": 2500, "net": 7500,
+                                     "invested": 0, "rate": 75}
     assert core.get_status("savings", "2020-01").startswith("January 2020: income ₹0, "
                                                             "expenses ₹999")
     with pytest.raises(ValueError):

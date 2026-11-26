@@ -66,7 +66,7 @@ def test_no_budget_and_backdated_rows_give_no_alert():
 def test_overall_budget_counts_every_category():
     core.set_budget("overall", 1000)
     reply = spend(300, category="food") and spend(300, category="transport")
-    assert alert_lines(reply) == [f"Overall: 60% of ₹1,000 used, "
+    assert alert_lines(reply) == [f"Total out budget: 60% of ₹1,000 used, "
                                   f"{core._days_left(date.today())} days left"]
 
 
@@ -100,7 +100,7 @@ def test_get_status_budgets_text():
     spend(600)
     text = core.get_status("budgets")
     assert "- Food: ₹600 of ₹1,000 (60%), ₹400 left" in text
-    assert "- Overall: ₹600 of ₹500 (120%), over by ₹100" in text
+    assert "- Total out budget: ₹600 of ₹500 (120%), over by ₹100" in text
     with pytest.raises(ValueError):
         core.get_status("weather")
 

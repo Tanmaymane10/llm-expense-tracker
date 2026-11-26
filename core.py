@@ -34,7 +34,7 @@ FALLBACK_MODEL = os.environ.get("EXPENSE_FALLBACK_MODEL", "gemini-flash-latest")
 # "low" (default) / "off" / "default": how much the model "thinks" before answering.
 THINKING = os.environ.get("EXPENSE_THINKING", "low").lower()
 CATEGORIES = ["food", "transport", "groceries", "shopping", "bills",
-              "entertainment", "health", "other"]
+              "entertainment", "health", "family", "investment", "other"]
 PAYMENT_METHODS = ["credit_card", "debit_card", "upi", "cash", "bank_transfer"]
 INCOME_SOURCES = ["salary", "freelance", "other"]
 BUDGET_STEPS = (50, 80, 100)   # % thresholds that trigger a one-time budget alert
@@ -128,6 +128,17 @@ def _check_item(value) -> str:
 
 def _check_category(value) -> str:
     return value if value in CATEGORIES else "other"
+
+def _check_d2d(value):
+    """The per-expense 'counts toward day-to-day' override: None (default), 1 (yes) or 0 (no)."""
+    if value is None or value == "default":
+        return None
+    if value is True or value == "yes" or value == 1:
+        return 1
+    if value is False or value == "no" or value == 0:
+        return 0
+    raise ValueError(f"Invalid day-to-day setting {value!r}.")
+
 
 def _check_card_name(value) -> str:
     name = " ".join(str(value or "").split())
@@ -240,6 +251,8 @@ def init_db():
         _add_column(conn, "expenses", "payment_method", "TEXT")
         _add_column(conn, "expenses", "card_id", "INTEGER REFERENCES credit_cards(id)")
         _add_column(conn, "expenses", "recurring_id", "INTEGER REFERENCES recurring(id)")
+        _add_column(conn, "expenses", "counts_d2d", "INTEGER")  # NULL default, 1 yes, 0 no
+        conn.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value REAL)")
         _add_column(conn, "credit_cards", "statement_day", "INTEGER")
         _add_column(conn, "credit_cards", "due_day", "INTEGER")
         _add_column(conn, "credit_cards", "credit_limit", "REAL")
@@ -396,7 +409,8 @@ def card_status(today: date = None) -> list:
                    "limit": limit, "last_reminded_on": reminded, "paid_through": paid_through,
                    "amount_due": None,
                    "spent_cycle": None, "prev_start": None, "prev_end": None,
-                   "due_date": None, "paid": None, "utilisation": None}
+                   "due_date": None, "paid": None, "utilisation": None,
+                   "next_due": None, "days_to_due": None}
             if sday:
                 c = card_cycle(sday, dday, today)
                 due = _card_spend(conn, cid, c["prev_start"], c["prev_end"])
@@ -406,6 +420,10 @@ def card_status(today: date = None) -> list:
                            prev_end=c["prev_end"], due_date=c["due_date"], paid=paid)
                 if limit:
                     row["utilisation"] = 100 * ((0 if paid else due) + spent) / limit
+                # unpaid: the closed bill's date (may be past = overdue); paid: the next bill's
+                nxt = c["due_date"] if not paid else card_cycle(sday, dday,
+                                                                c["cur_end"])["due_date"]
+                row.update(next_due=nxt, days_to_due=(nxt - today).days if nxt else None)
             out.append(row)
     return out
 
@@ -474,10 +492,13 @@ def _resolve_card(conn, card_name, payment_method):
 # When set to a list, add_expenses appends the ids it inserted (the app's Undo). A ContextVar,
 # so each Streamlit session thread has its own and callers that don't set it are unaffected.
 saved_ids: ContextVar = ContextVar("saved_ids", default=None)
-UNDO_COLUMNS = ("spent_at", "item", "amount_inr", "category", "payment_method", "card_id")
+UNDO_COLUMNS = ("spent_at", "item", "amount_inr", "category", "payment_method", "card_id",
+                "counts_d2d")
 
 
-def add_expenses(expenses: list, raw_text: str) -> str:
+def add_expenses(expenses: list, raw_text: str, counts_d2d=None) -> str:
+    """counts_d2d is a keyword, not an expense field, so nothing the model sends can set it."""
+    counts_d2d = _check_d2d(counts_d2d)
     if not expenses or len(expenses) > 20:
         raise ValueError("Provide between 1 and 20 expenses.")
 
@@ -510,11 +531,13 @@ def add_expenses(expenses: list, raw_text: str) -> str:
                     raw_text[:MAX_INPUT_CHARS],
                     payment_method,
                     card_id,
+                    counts_d2d,
                 )
             )
 
         ids = [conn.execute("INSERT INTO expenses (spent_at, item, amount_inr, category, "
-                            "raw_text, payment_method, card_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                            "raw_text, payment_method, card_id, counts_d2d) "
+                            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                             row).lastrowid for row in rows]
         alerts = budget_alerts(conn, rows)
     if (sink := saved_ids.get()) is not None:  # after the commit, so only saved ids
@@ -599,6 +622,77 @@ def budget_status(today: date = None) -> list:
              "pct": 100 * spend.get(c, 0.0) / budgets[c]} for c in order]
 
 
+# ---------------------------------------------------------------- spending groups
+# Every expense is in one group. Order matters: a recurring family or investment payment stays
+# family / invested; the override (counts_d2d) wins over everything. Column names only, so it
+# works in any query on expenses (joined tables have no such columns).
+GROUPS = ("day-to-day", "fixed", "family", "invested")
+GROUP_SQL = ("CASE WHEN counts_d2d = 1 THEN 'day-to-day' "
+             "WHEN category = 'family' THEN 'family' "
+             "WHEN category = 'investment' THEN 'invested' "
+             "WHEN counts_d2d = 0 OR recurring_id IS NOT NULL OR category = 'bills' THEN 'fixed' "
+             "ELSE 'day-to-day' END")
+D2D_DEFAULTS = {"d2d_target": 5000.0, "d2d_limit": 7000.0}
+
+
+def get_d2d_limits() -> tuple:
+    """(target, limit) for day-to-day spending per month."""
+    with get_conn() as conn:
+        got = dict(conn.execute("SELECT key, value FROM settings WHERE key IN "
+                                "('d2d_target', 'd2d_limit')"))
+    return got.get("d2d_target", D2D_DEFAULTS["d2d_target"]), \
+        got.get("d2d_limit", D2D_DEFAULTS["d2d_limit"])
+
+
+def set_d2d_limits(target, limit) -> str:
+    target, limit = _check_amount(target), _check_amount(limit)
+    if target >= limit:
+        raise ValueError("The target must be below the limit.")
+    with get_conn() as conn:
+        conn.executemany("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) "
+                         "DO UPDATE SET value = excluded.value",
+                         [("d2d_target", target), ("d2d_limit", limit)])
+    return f"Day-to-day: target {inr(target)}, limit {inr(limit)} per month."
+
+
+def d2d_status(spent: float, target: float, limit: float) -> str:
+    if spent < target:
+        return "on track"
+    return "near limit" if spent <= limit else "over limit"
+
+
+def month_pace(so_far: float, today: date) -> float:
+    """Month-end day-to-day spend at the pace so far (today counts as a day elapsed)."""
+    return so_far / today.day * monthrange(today.year, today.month)[1]
+
+
+def month_figures(today: date = None) -> dict:
+    """Everything the Home hero and Total-out cards show for this month."""
+    today = today or date.today()
+    with get_conn() as conn:
+        rows = conn.execute(
+            f"SELECT {GROUP_SQL} AS grp, SUM(amount_inr), "
+            "SUM(CASE WHEN substr(spent_at, 1, 10) = :d THEN amount_inr ELSE 0 END), "
+            "SUM(CASE WHEN payment_method IN ('upi', 'cash') THEN amount_inr ELSE 0 END) "
+            "FROM expenses WHERE substr(spent_at, 1, 7) = :m GROUP BY grp",
+            {"d": today.isoformat(), "m": today.strftime("%Y-%m")}).fetchall()
+    by = {g: (total, day, upi) for g, total, day, upi in rows}
+    so_far, spent_today, upi_cash = by.get("day-to-day", (0.0, 0.0, 0.0))
+    target, limit = get_d2d_limits()
+    groups = {g: by.get(g, (0.0,))[0] for g in GROUPS}
+    return {"d2d": so_far, "today": spent_today, "pace": month_pace(so_far, today),
+            "left": limit - so_far, "status": d2d_status(so_far, target, limit),
+            "target": target, "limit": limit, "groups": groups,
+            "total_out": sum(groups.values()), "upi_cash": upi_cash,  # day-to-day rows only
+            "near": [b for b in budget_status(today)
+                     if b["category"] != "overall" and b["pct"] >= 80]}
+
+
+def budget_label(category: str) -> str:
+    """'overall' covers all four spending groups, so it is shown as the Total out budget."""
+    return "Total out budget" if category == "overall" else category.capitalize()
+
+
 def budget_alerts(conn, rows: list, today: date = None) -> list:
     """Alert lines for a batch of just-inserted rows (spent_at, item, amount, category, ...).
     Sums the whole batch first, so two Food items crossing 50% give one line, not two."""
@@ -617,11 +711,12 @@ def budget_alerts(conn, rows: list, today: date = None) -> list:
     for cat in [c for c in CATEGORIES + ["overall"] if c in budgets and batch.get(c, 0) > 0]:
         limit, after = budgets[cat], spend.get(cat, 0.0)
         before = after - batch[cat]
+        label = budget_label(cat)
         if after > limit:  # repeated on every further expense
-            lines.append(f"{cat.capitalize()}: over budget by {inr(after - limit)} "
+            lines.append(f"{label}: over budget by {inr(after - limit)} "
                          f"({inr(after)} of {inr(limit)})")
         elif any(before * 100 < s * limit <= after * 100 for s in BUDGET_STEPS):
-            lines.append(f"{cat.capitalize()}: {after * 100 / limit:.0f}% of {inr(limit)} used, "
+            lines.append(f"{label}: {after * 100 / limit:.0f}% of {inr(limit)} used, "
                          f"{_days_left(today)} days left")
     return lines
 
@@ -645,15 +740,19 @@ def delete_income(income_id: int) -> bool:
 
 
 def savings(month: str) -> dict:
-    """Income, expenses (refunds net out), net and rate (None when there is no income)."""
+    """Income, expenses (refunds net out), net and rate (None when there is no income).
+    Invested money counts as saved: it is left out of expenses and reported on its own."""
+    inv = f"({GROUP_SQL}) = 'invested'"
     with get_conn() as conn:
-        income, spent = conn.execute(
+        income, spent, invested = conn.execute(
             "SELECT (SELECT COALESCE(SUM(amount_inr), 0) FROM income "
             "        WHERE substr(received_at, 1, 7) = :m), "
-            "       (SELECT COALESCE(SUM(amount_inr), 0) FROM expenses "
-            "        WHERE substr(spent_at, 1, 7) = :m)", {"m": month}).fetchone()
+            f"      (SELECT COALESCE(SUM(CASE WHEN {inv} THEN 0 ELSE amount_inr END), 0) "
+            "        FROM expenses WHERE substr(spent_at, 1, 7) = :m), "
+            f"      (SELECT COALESCE(SUM(CASE WHEN {inv} THEN amount_inr ELSE 0 END), 0) "
+            "        FROM expenses WHERE substr(spent_at, 1, 7) = :m)", {"m": month}).fetchone()
     net = income - spent
-    return {"income": income, "expenses": spent, "net": net,
+    return {"income": income, "expenses": spent, "net": net, "invested": invested,
             "rate": 100 * net / income if income else None}
 
 
@@ -907,8 +1006,9 @@ def get_status(topic: str, month: str = None) -> str:
             raise ValueError(f"Invalid month {month!r}. Use YYYY-MM.") from None
         s = savings(first.strftime("%Y-%m"))
         rate = "n/a" if s["rate"] is None else f"{s['rate']:.0f}%"
+        invested = f"invested {inr(s['invested'])}, " if s["invested"] else ""
         return (f"{first:%B %Y}: income {inr(s['income'])}, expenses {inr(s['expenses'])}, "
-                f"net {inr(s['net'])}, savings rate {rate}.")
+                f"{invested}net {inr(s['net'])}, savings rate {rate}.")
     if topic == "cards":
         return "\n".join(map(_card_status_line, card_status())) or "No cards registered."
     if topic != "budgets":
@@ -921,7 +1021,7 @@ def get_status(topic: str, month: str = None) -> str:
     for r in rows:
         left = r["budget"] - r["spent"]
         tail = f"{inr(left)} left" if left >= 0 else f"over by {inr(-left)}"
-        lines.append(f"- {r['category'].capitalize()}: {inr(r['spent'])} of "
+        lines.append(f"- {budget_label(r['category'])}: {inr(r['spent'])} of "
                      f"{inr(r['budget'])} ({r['pct']:.0f}%), {tail}")
     return "\n".join(lines)
 
@@ -954,6 +1054,8 @@ def update_expense(expense_id: int, **fields) -> str:
         updates["amount_inr"] = _check_amount(fields["amount_inr"])
     if fields.get("category") is not None:
         updates["category"] = _check_category(fields["category"])
+    if fields.get("counts_d2d") is not None:  # "default" resets the override to NULL
+        updates["counts_d2d"] = _check_d2d(fields["counts_d2d"])
     method, card = fields.get("payment_method"), fields.get("card_name")
     if not updates and method is None and not card:
         return "Nothing to update."
@@ -987,7 +1089,8 @@ def apply_edits(changes: dict) -> dict:
                      and (change[k] is None or str(change[k]).strip() == "")]
             if empty:
                 raise ValueError(f"{', '.join(empty)} can't be empty.")
-            fields = {k: change[k] for k in ("spent_at", "item", "category") if k in change}
+            fields = {k: change[k] for k in ("spent_at", "item", "category", "counts_d2d")
+                      if k in change}
             if "amount_inr" in change:
                 fields["amount_inr"] = float(change["amount_inr"])
                 with get_conn() as conn:  # a refund is shown negative; update_expense keeps it so
@@ -1394,6 +1497,10 @@ def system_prompt(now: datetime = None) -> str:
         "or food shopping. Netflix subscriptions belong to entertainment. Petrol belongs to "
         "transport.\n"
 
+        "- family: money sent or given to family members; a meal or outing with family keeps "
+        "its usual category. investment: SIP, mutual fund, stocks, FD, PPF; an expense, never "
+        "income.\n"
+
         "- Merchant corrections: normalize obvious, unambiguous merchant typos, such as "
         "'netflx' to 'netflix'. Do not invent corrections when the intended merchant is unclear.\n"
 
@@ -1717,13 +1824,13 @@ def quick_items(days: int = 90, n: int = 8, today: date = None) -> list:
 
 
 def quick_add(item, amount_inr, category, payment_method=None, card_name=None,
-              when: datetime = None) -> str:
+              when: datetime = None, counts_d2d=None) -> str:
     """One expense from the quick-add panel: add_expenses validation, alerts and reply."""
     started = time.perf_counter()
     when = (when or datetime.now()).strftime("%Y-%m-%d %H:%M")
     reply = add_expenses([{"spent_at": when, "item": item, "amount_inr": amount_inr,
                            "category": category, "payment_method": payment_method,
-                           "card_name": card_name}], "quick add")
+                           "card_name": card_name}], "quick add", counts_d2d=counts_d2d)
     _log_llm_call("quick_add", "ok", started, 0, model="none")  # 0 tokens; not in metrics
     return "\n\n".join([reply, *due_notes()])
 

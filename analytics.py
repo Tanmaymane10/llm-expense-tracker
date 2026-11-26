@@ -9,12 +9,14 @@ WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
 def load_expenses() -> pd.DataFrame:
     """Read expenses and optional payment/card details from SQLite."""
-    from core import get_conn
+    from core import GROUP_SQL, get_conn
 
     with get_conn() as conn:
         df = pd.read_sql_query(
-            """
+            f"""
             SELECT
+                {GROUP_SQL} AS grp,
+                e.counts_d2d,
                 e.id,
                 e.spent_at,
                 e.item,
