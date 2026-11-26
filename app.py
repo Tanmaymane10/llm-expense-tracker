@@ -58,6 +58,9 @@ THEME_CSS = """
   --credit: #9BE88A;
 }
 .stApp { background: var(--bg); color: var(--text); }
+/* stMain is what scrolls: reserve the scrollbar on both sides so the column centers on the
+   window, like the fixed nav does */
+[data-testid="stMain"] { scrollbar-gutter: stable both-edges; }
 [data-testid="stHeader"] { background: transparent; }
 /* one centered column, also on desktop; room at the bottom for the fixed nav */
 [data-testid="stMainBlockContainer"] {
@@ -163,7 +166,7 @@ hr { border-color: var(--border); }
   left: 50%;
   bottom: calc(16px + env(safe-area-inset-bottom));
   transform: translateX(-50%);
-  width: min(536px, calc(100% - 24px));
+  width: min(520px, calc(100% - 40px));  /* = the column's 560px minus its 20px sides */
   height: 72px;
   z-index: 999990;  /* above all page content; this stHorizontalBlock is what paints */
   background: #151A21;
