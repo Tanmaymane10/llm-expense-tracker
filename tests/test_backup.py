@@ -78,3 +78,35 @@ def test_main_refuses_bad_settings_without_calling_rclone(monkeypatch):
     monkeypatch.setenv("BACKUP_REMOTE", "gcrypt:expense-backups")
     monkeypatch.setenv("BACKUP_KEEP", "0")
     assert backup.main() == 1
+
+
+def test_backup_includes_rows_still_in_the_wal_file(tmp_path):
+    import shutil
+
+    import core
+    insert_expense("chai", 15)
+    writer = sqlite3.connect(core.DB_PATH)  # stays open, so its rows are never checkpointed
+    try:
+        assert writer.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+        writer.execute("PRAGMA wal_autocheckpoint=0")
+        writer.executemany("INSERT INTO expenses (spent_at, item, amount_inr, category) "
+                           "VALUES ('2026-11-01 09:00', ?, 10, 'food')",
+                           [(f"item{i}",) for i in range(50)])
+        writer.commit()
+
+        # The main .db file alone is missing the new rows: they sit only in -wal.
+        main_only = tmp_path / "main_only.db"
+        shutil.copyfile(core.DB_PATH, main_only)
+        with closing(sqlite3.connect(main_only)) as conn:
+            assert conn.execute("SELECT COUNT(*) FROM expenses").fetchone()[0] < 51
+
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+        out = backup.make_backup(out_dir)
+    finally:
+        writer.close()
+    restored = tmp_path / "restored.db"
+    restored.write_bytes(gzip.decompress(out.read_bytes()))
+    with closing(sqlite3.connect(restored)) as conn:
+        assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+        assert conn.execute("SELECT COUNT(*) FROM expenses").fetchone()[0] == 51
