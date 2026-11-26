@@ -85,7 +85,7 @@ def test_editor_shows_recent_rows_with_payment_label():
     from test_app_smoke import run_app
     core.add_expenses([good_expense(spent_at=f"{date.today()} 09:00", payment_method="credit_card",
                                     card_name="SBI Cashback")], "t")
-    at = run_app()
+    at = run_app("All")
     df = at.dataframe[0].value
     assert list(df["payment"]) == ["SBI Cashback"] and list(df["delete"]) == [False]
 
@@ -94,7 +94,7 @@ def test_delete_needs_confirm():
     from test_app_smoke import _widget, run_app
     insert_expense("chai")
     insert_expense("tea")
-    at = run_app()
+    at = run_app("All")
     at.session_state["confirm_delete"] = [2]  # as if the box was ticked and Delete pressed
     at.run()
     assert any("Delete #2 tea?" in w.value for w in at.warning)

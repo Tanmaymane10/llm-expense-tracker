@@ -10,6 +10,7 @@ import streamlit as st
 
 import analytics as an
 import core
+import ui
 from auth import require_pin
 from core import (
     CATEGORIES,
@@ -171,7 +172,21 @@ hr { border-color: var(--border); }
   color: var(--on-accent) !important;
   box-shadow: 0 8px 24px rgba(200, 242, 90, 0.28) !important;
 }
+/* Home header: lock button as a 44px circle */
+.st-key-lock button {
+  width: 44px;
+  height: 44px;
+  min-height: 44px;
+  padding: 0 !important;
+  border-radius: 50% !important;
+  border-color: #262D37 !important;
+  background: var(--surface) !important;
+}
+[class*="st-key-sec_"] { justify-content: space-between; }
+[class*="st-key-sec_"] h3 { padding: 0; margin: 0; }
+[class*="st-key-sec_"] button { color: var(--accent) !important; min-height: 44px; }
 /* the label stays for screen readers only */
+.st-key-lock button p,
 .st-key-nav_add button p {
   position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0);
 }
@@ -271,13 +286,15 @@ def _recent_rows() -> pd.DataFrame:
     with get_conn() as conn:
         df = pd.read_sql_query(
             "SELECT e.id, e.spent_at, e.item, e.amount_inr, e.category, e.payment_method, "
-            "c.card_name, e.recurring_id IS NOT NULL AS auto FROM expenses e "
+            "c.card_name, e.recurring_id IS NOT NULL AS auto, e.counts_d2d FROM expenses e "
             "LEFT JOIN credit_cards c ON c.id = e.card_id ORDER BY e.id DESC LIMIT 50", conn)
     df["payment"] = [core.payment_label(m, c) for m, c in
                      zip(df.pop("payment_method"), df.pop("card_name"), strict=True)]
     df["spent_at"] = pd.to_datetime(df["spent_at"], errors="coerce")
     df["auto"] = df["auto"].astype(bool)
-    return df[["id", "spent_at", "item", "amount_inr", "category", "payment", "auto"]]
+    df["counts_d2d"] = df["counts_d2d"].map({1: "yes", 0: "no"}).fillna("default")
+    return df[["id", "spent_at", "item", "amount_inr", "category", "payment", "counts_d2d",
+               "auto"]]
 
 
 _READS = {
@@ -286,7 +303,7 @@ _READS = {
     "card_status": card_status, "subscription_status": subscription_status,
     "savings": savings, "list_cards": list_cards, "recent": _recent_rows,
     "local_saves": an.local_saves, "quick_items": core.quick_items,
-    "payment_options": core.payment_options,
+    "payment_options": core.payment_options, "month_figures": core.month_figures,
 }
 
 
@@ -541,7 +558,7 @@ def render_quick_add():
     items, opts = read("quick_items"), read("payment_options")
     labels = [f"{r['item']} · {inr(r['amount_inr'])}" for r in items] + ["+ Other"]
     v = st.session_state.get("qa_v", 0)  # bumped after a save, which resets the chips
-    pick = st.pills("Quick add", labels, key=f"qa_pick_{v}")
+    pick = st.pills("Quick add", labels, key=f"qa_pick_{v}", label_visibility="collapsed")
     if pick is None:
         return
     cur = None if pick == "+ Other" else items[labels.index(pick)]
@@ -572,49 +589,87 @@ def render_quick_add():
             _after_write("Saved")
 
 
-def render_chat():
+def _lock():
+    st.session_state.pop("authed", None)  # require_pin() shows the PIN gate on the rerun
+
+
+def _section(title: str, button: str = None, key: str = None, view: str = None):
+    """A section title, with an optional text button on the right that opens `view`."""
+    with st.container(horizontal=True, vertical_alignment="center", key=f"sec_{key or title}"):
+        st.subheader(title)
+        if button:
+            st.button(button, key=key, type="tertiary", on_click=_go, args=(view,))
+
+
+def render_home():
     if "history" not in st.session_state:
         st.session_state.history = []  # plain-text turns only
     if "sid" not in st.session_state:
         st.session_state.sid = uuid.uuid4().hex  # key for the per-user rate limit
+    today = date.today()
+    fig = read("month_figures", today)
 
+    with st.container(horizontal=True, vertical_alignment="center", key="home_header"):
+        st.html(ui.header(today))
+        st.button("Lock app", icon=":material/lock:", key="lock", on_click=_lock)
+    st.html(ui.hero(fig, today))
+    st.html(ui.total_out(fig))
+
+    _section("Cards")
+    cards = read("card_status", today)
+    st.html(ui.cards(cards, fig["upi_cash"]))
+    for card in cards:
+        if line := due_line(card, today):
+            st.warning(line)
+
+    _section("Quick add")
     render_quick_add()
-    chat_col, data_col = st.columns(2)
+    with st.container(key="chat_box"):  # inside a container, so it doesn't dock to the bottom
+        prompt = st.chat_input("Spent 20 on chai at 7 pm using UPI", max_chars=MAX_INPUT_CHARS)
+    if prompt:
+        slot = st.empty()  # removed after the reply, like the old spinner
+        with slot.status("Working on it...") as box:
+            token = core.status_hook.set(lambda text: box.update(label=text))
+            try:
+                with _undoable():
+                    reply = chat_turn(st.session_state.history, prompt, st.session_state.sid)
+            except Exception:  # model or network failure: show a clean message, not a trace
+                reply = "The AI service is unavailable right now. Please try again shortly."
+            finally:
+                core.status_hook.reset(token)
+        slot.empty()
+        st.session_state.history += [
+            {"role": "user", "content": prompt},
+            {"role": "assistant", "content": reply},
+        ]
+        st.cache_data.clear()  # any turn may have written (expenses, budgets, cards...)
+        st.rerun()  # redraw the cards above with the new numbers
+    render_undo()
+    render_history()
 
-    with chat_col:
-        # The input box comes FIRST so it stays at the top of the chat.
-        prompt = st.chat_input("e.g. bought vada pav for 30 and auto for 120",
-                               max_chars=MAX_INPUT_CHARS)
-        if prompt:
-            slot = st.empty()  # removed after the reply, like the old spinner
-            with slot.status("Working on it...") as box:
-                token = core.status_hook.set(lambda text: box.update(label=text))
-                try:
-                    with _undoable():
-                        reply = chat_turn(st.session_state.history, prompt,
-                                          st.session_state.sid)
-                except Exception:  # model or network failure: show a clean message, not a trace
-                    reply = "The AI service is unavailable right now. Please try again shortly."
-                finally:
-                    core.status_hook.reset(token)
-            slot.empty()
-            st.session_state.history += [
-                {"role": "user", "content": prompt},
-                {"role": "assistant", "content": reply},
-            ]
-            st.cache_data.clear()  # any turn may have written (expenses, budgets, cards...)
-        render_undo()
+    _section("Recent", "View all", "view_all", "All")
+    st.html(ui.recent(read("recent").head(15), today))
 
-        # Newest exchange first, so the latest reply sits right under the input box.
-        history = st.session_state.history
-        pairs = [history[i:i + 2] for i in range(0, len(history), 2)]
-        for pair in reversed(pairs):
+
+def render_history():
+    """Newest exchange first under the input (the model may be asking a question); older
+    exchanges stay folded away so Home stays short."""
+    history = st.session_state.history
+    pairs = [history[i:i + 2] for i in range(0, len(history), 2)][::-1]
+    for i, pair in enumerate(pairs):
+        if i == 1:
+            older = st.expander(f"Earlier messages ({len(pairs) - 1})")
+        with older if i else st.container():
             for m in pair:
                 with st.chat_message(m["role"]):
                     st.write(m["content"])
 
-    with data_col:
-        render_recent()
+
+def render_all():
+    st.button("Back", icon=":material/arrow_back:", key="back_home", type="tertiary",
+              on_click=_go, args=("Home",))
+    st.subheader("All expenses")
+    render_recent()
 
 
 def render_recent():
@@ -641,6 +696,9 @@ def render_recent():
                                                          required=True),
             "payment": st.column_config.SelectboxColumn(
                 "Paid with", options=list(read("payment_options"))),
+            "counts_d2d": st.column_config.SelectboxColumn(
+                "Day-to-day", options=["default", "yes", "no"], required=True,
+                help="Counts toward the day-to-day budget. Default follows the category."),
             "auto": st.column_config.CheckboxColumn("Auto", help="Posted by a subscription"),
             "delete": st.column_config.CheckboxColumn("Delete"),
         })
@@ -931,13 +989,10 @@ require_pin()
 init_db()
 if post_due_recurring():
     st.cache_data.clear()
-for _card in read("card_status"):
-    if _line := due_line(_card, date.today()):
-        st.warning(_line)
 
 # Only the selected view runs, so a chat message no longer rebuilds every chart.
-VIEWS = {"Home": render_chat, "Analytics": render_analytics, "Plan": render_plan,
-         "Usage": render_llm_usage}
+VIEWS = {"Home": render_home, "Analytics": render_analytics, "Plan": render_plan,
+         "Usage": render_llm_usage, "All": render_all}
 st.session_state.setdefault("view", "Home")
 render_nav()
-VIEWS.get(st.session_state.view, render_chat)()
+VIEWS.get(st.session_state.view, render_home)()

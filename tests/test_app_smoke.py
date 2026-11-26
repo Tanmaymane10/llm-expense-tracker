@@ -20,7 +20,11 @@ def run_app(view="Home"):
 
 
 def go(at, view):
-    at.button(key=f"nav_{view}").click().run()
+    """Switch view like a user: the bottom nav, or Home's "View all" for the full list."""
+    if view == "All":
+        go(at, "Home").button(key="view_all").click().run()
+    else:
+        at.button(key=f"nav_{view}").click().run()
     return at
 
 
@@ -78,6 +82,13 @@ def test_llm_usage_tab_renders_with_recorded_calls():
     assert not at.exception
     labels = [m.label for m in at.metric]
     assert "Calls today" in labels and "Success rate" in labels
+
+
+def _walk(node):
+    """Every element under node, in page order."""
+    for child in getattr(node, "children", {}).values():
+        yield child
+        yield from _walk(child)
 
 
 def _widget(items, label, nth=0):
@@ -140,7 +151,7 @@ def test_plan_remove_card_and_auto_tag():
     _widget(at.selectbox, "Card").set_value("(remove card)")
     _widget(at.button, "Save subscription").click().run()
     assert query("SELECT card_id, payment_method FROM recurring") == [(None, None)]
-    recent = go(at, "Home").dataframe[0].value  # the editable recent-entries table
+    recent = go(at, "All").dataframe[0].value  # the editable recent-entries table
     assert list(recent["item"]) == ["netflix"] and list(recent["auto"]) == [True]
 
 
@@ -152,9 +163,8 @@ def test_chat_input_is_on_top_and_newest_exchange_comes_first(monkeypatch):
     at.chat_input[0].set_value("second").run()
     assert not at.exception
 
-    column = at.columns[0]
-    kinds = [type(child).__name__ for child in column.children.values()]
-    assert kinds[0] == "ChatInput"  # the input box is the first thing in the chat column
+    order = [type(n).__name__ for n in _walk(at.main)]
+    assert order.index("ChatInput") < order.index("ChatMessage")  # input above the replies
 
     texts = [m.markdown[0].value for m in at.chat_message]
     assert texts == ["second", "reply to second", "first", "reply to first"]
@@ -167,7 +177,7 @@ def test_only_the_selected_view_runs(monkeypatch):
     monkeypatch.setattr(an, "load_expenses", lambda: loads.append(1) or real())
     insert_expense("chai", 15, "food", f"{date.today()} 09:00")
     at = run_app()
-    assert not at.radio and not loads  # Chat view: no Period radio, no expense load
+    assert not at.radio and not loads  # Home: no Period control, no full expense load
     go(at, "Analytics")
     assert at.radio and loads
 
@@ -210,3 +220,25 @@ def test_analytics_period_survives_a_view_switch():
     go(go(at, "Home"), "Analytics")
     assert at.radio[0].value == "Custom" and tuple(at.date_input[0].value) == picked
     assert not at.exception
+
+
+XSS = "<script>alert(1)</script>"
+
+
+def test_home_escapes_data_in_html():
+    import core
+    core.register_card("HDFC MoneyBack", statement_day=1, due_day=20, credit_limit=1000)
+    core.add_expenses([{"spent_at": f"{date.today()} 09:00", "item": XSS, "amount_inr": 15,
+                        "category": "food", "payment_method": "credit_card",
+                        "card_name": "HDFC MoneyBack"}], "t")
+    at = run_app()
+    bodies = " ".join(h.proto.body for h in at.get("html"))
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in bodies and "<script" not in bodies
+    assert not at.exception
+
+
+def test_lock_button_relocks(monkeypatch):
+    monkeypatch.setenv("APP_PIN", "123456")
+    at = run_app()
+    at.button(key="lock").click().run()
+    assert not nav_keys(at) and at.text_input[0].label == "Enter your 6-digit PIN"
