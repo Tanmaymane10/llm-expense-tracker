@@ -7,6 +7,7 @@ import pandas as pd
 import streamlit as st
 
 import analytics as an
+import core
 from auth import require_pin
 from core import (
     CATEGORIES,
@@ -257,12 +258,47 @@ def budget_chart(df: pd.DataFrame):
         height=40 * len(data) + 20, padding={"left": 5, "top": 5, "bottom": 5, "right": 110}))
 
 
+# ---- cached reads: heavy reads are cached for 60 s, so writes from Telegram or the recurring
+# job show up within that. The DB path is part of the key, so each test DB gets its own
+# entries. Every UI write clears the cache.
+def _recent_rows() -> pd.DataFrame:
+    with get_conn() as conn:
+        return pd.read_sql_query(
+            "SELECT id, spent_at, item || CASE WHEN recurring_id IS NOT NULL "
+            "THEN ' (auto)' ELSE '' END AS item, amount_inr, category FROM expenses "
+            "ORDER BY id DESC LIMIT 50", conn)
+
+
+_READS = {
+    "expenses": an.load_expenses, "income": an.load_income, "llm_calls": an.load_llm_calls,
+    "budget_progress": an.budget_progress, "budget_status": budget_status,
+    "card_status": card_status, "subscription_status": subscription_status,
+    "savings": savings, "list_cards": list_cards, "recent": _recent_rows,
+}
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def _cached(name: str, db_path: str, *args):
+    return _READS[name](*args)
+
+
+def read(name: str, *args):
+    return _cached(name, core.DB_PATH, *args)
+
+
+def _after_write(msg: str):
+    """Toast, drop cached reads so the redraw shows the change, then rerun."""
+    st.toast(msg)
+    st.cache_data.clear()
+    st.rerun()
+
+
 def render_subscriptions():
     st.subheader("Subscriptions")
     st.caption("Each payment is logged automatically on its due date. You can also say "
                "\"netflix 649 every month on the 5th\" in Chat.")
     today = date.today()
-    subs = subscription_status(today)
+    subs = read("subscription_status", today)
     if subs:
         # a display string: a date column filled with "" for paused rules breaks Arrow
         rows = [{**r, "next_due": f"{r['next_due'].day} {r['next_due']:%b %Y}"
@@ -295,19 +331,18 @@ def render_subscriptions():
         start = c3.date_input("A payment date (yearly/weekly)",
                               value=date.fromisoformat(cur["start_date"]) if cur else today)
         has_card = bool(cur and cur["card_name"])
-        cards = ["(remove card)" if has_card else "(none)"] + list_cards()
+        cards = ["(remove card)" if has_card else "(none)"] + read("list_cards")
         card = c4.selectbox("Card", cards,
                             index=cards.index(cur["card_name"]) if has_card else 0)
         if st.form_submit_button("Save subscription"):
             try:
-                st.toast(manage_subscription(
+                _after_write(manage_subscription(
                     "update" if cur else "add", pick if cur else item, amount_inr=amount,
                     category=category, frequency=freq,
                     day=day if freq == "monthly" else None,
                     start_date=start.isoformat() if freq != "monthly" else None,
                     card_name=None if card.startswith("(") else card,
                     remove_card=card == "(remove card)"))
-                st.rerun()
             except ValueError as e:
                 st.error(str(e))
     if not subs:
@@ -317,9 +352,8 @@ def render_subscriptions():
     rule = next(r for r in subs if r["item"] == target)
     b1, b2 = st.columns(2)
     if b1.button("Pause" if rule["status"] == "active" else "Resume"):
-        st.toast(manage_subscription("pause" if rule["status"] == "active" else "resume",
-                                     target))
-        st.rerun()
+        _after_write(manage_subscription("pause" if rule["status"] == "active" else "resume",
+                                         target))
     if b2.button("Cancel subscription"):
         st.session_state.confirm_cancel = target
     if st.session_state.get("confirm_cancel") == target:
@@ -327,8 +361,7 @@ def render_subscriptions():
         yes, no = st.columns(2)
         if yes.button("Yes, cancel it", type="primary"):
             del st.session_state.confirm_cancel
-            st.toast(manage_subscription("cancel", target))
-            st.rerun()
+            _after_write(manage_subscription("cancel", target))
         if no.button("Keep it"):
             del st.session_state.confirm_cancel
             st.rerun()
@@ -337,7 +370,7 @@ def render_subscriptions():
 def render_plan():
     st.subheader("Monthly budgets")
     st.caption("Leave a row at 0 for no budget. You can also say \"food budget 6000\" in Chat.")
-    current = {r["category"]: r["budget"] for r in budget_status()}
+    current = {r["category"]: r["budget"] for r in read("budget_status")}
     table = pd.DataFrame({"category": CATEGORIES + ["overall"]})
     table["budget"] = table["category"].map(current).fillna(0.0)
     edited = st.data_editor(
@@ -352,15 +385,15 @@ def render_plan():
         changed = edited[edited["budget"].fillna(0) != table["budget"]]
         for cat, amount in zip(changed["category"], changed["budget"].fillna(0), strict=True):
             set_budget(cat, float(amount))
-        st.toast(f"Saved {len(changed)} budget change(s)." if len(changed) else "No changes.")
         if len(changed):
-            st.rerun()  # Analytics renders before this tab, so redraw it with the new budgets
+            _after_write(f"Saved {len(changed)} budget change(s).")
+        st.toast("No changes.")
 
     render_subscriptions()
 
     st.subheader("Cards")
     st.caption("Statement and due days drive the bill reminders. Leave a field empty to keep it.")
-    cards = {c["card"]: c for c in card_status()}
+    cards = {c["card"]: c for c in read("card_status")}
     name = st.selectbox("Card", list(cards))
     if name:
         c = cards[name]
@@ -376,8 +409,7 @@ def render_plan():
                                     help="Total limit, not available limit")
             if st.form_submit_button("Save card"):
                 try:
-                    st.toast(register_card(name, sday, dday, limit))
-                    st.rerun()
+                    _after_write(register_card(name, sday, dday, limit))
                 except ValueError as e:
                     st.error(str(e))
         if c["paid"] is False:
@@ -393,8 +425,7 @@ def render_plan():
                 if yes.button("Yes, mark paid", type="primary"):
                     st.session_state.undo_paid = (name, c["id"], c["paid_through"])
                     del st.session_state.confirm_paid
-                    st.toast(register_card(name, bill_paid=True))
-                    st.rerun()
+                    _after_write(register_card(name, bill_paid=True))
                 if no.button("Cancel", key="cancel_paid"):
                     del st.session_state.confirm_paid
                     st.rerun()
@@ -402,8 +433,7 @@ def render_plan():
         if undo and undo[0] == name and st.button("Undo paid"):
             set_paid_through(undo[1], undo[2])
             del st.session_state.undo_paid
-            st.toast(f"{name}: bill marked unpaid again.")
-            st.rerun()
+            _after_write(f"{name}: bill marked unpaid again.")
 
     st.subheader("Income")
     st.caption("Salary, freelance or other money received. Refunds and cashback are not income.")
@@ -416,12 +446,11 @@ def render_plan():
         note = st.text_input("Note (optional)", max_chars=80)
         if st.form_submit_button("Add income"):
             try:
-                st.toast(add_income(amount, source, received.isoformat(), note, "plan tab"))
-                st.rerun()
+                _after_write(add_income(amount, source, received.isoformat(), note, "plan tab"))
             except ValueError as e:
                 st.error(str(e))
 
-    rows = an.load_income().head(10)
+    rows = read("income").head(10)
     if rows.empty:
         return
     st.caption("Last 10 entries")
@@ -445,8 +474,7 @@ def render_plan():
         if yes.button("Yes, delete", type="primary"):
             delete_income(target)
             del st.session_state.confirm_income
-            st.toast("Income entry deleted.")
-            st.rerun()
+            _after_write("Income entry deleted.")
         if no.button("Cancel"):
             del st.session_state.confirm_income
             st.rerun()
@@ -474,6 +502,7 @@ def render_chat():
                 {"role": "user", "content": prompt},
                 {"role": "assistant", "content": reply},
             ]
+            st.cache_data.clear()  # any turn may have written (expenses, budgets, cards...)
 
         # Newest exchange first, so the latest reply sits right under the input box.
         history = st.session_state.history
@@ -484,11 +513,7 @@ def render_chat():
                     st.write(m["content"])
 
     with data_col:
-        with get_conn() as conn:
-            recent = pd.read_sql_query(
-                "SELECT id, spent_at, item || CASE WHEN recurring_id IS NOT NULL "
-                "THEN ' (auto)' ELSE '' END AS item, amount_inr, category FROM expenses "
-                "ORDER BY id DESC LIMIT 50", conn)
+        recent = read("recent")
         if recent.empty:
             st.info("No expenses yet.")
         else:
@@ -497,7 +522,7 @@ def render_chat():
 
 
 def render_analytics():
-    df_all = an.load_expenses()  # loaded after the chat block so new entries show up at once
+    df_all = read("expenses")
     if df_all.empty:
         st.info("Log some expenses in the Chat tab and your analytics will appear here.")
         return
@@ -545,7 +570,7 @@ def render_analytics():
 
     # --- budgets (always this month, whatever the period above)
     st.subheader("Budgets this month")
-    budgets = an.budget_progress()
+    budgets = read("budget_progress")
     if budgets.empty:
         st.caption("No budgets yet. Set them in the Plan tab or say \"food budget 6000\" in Chat.")
     else:
@@ -553,12 +578,12 @@ def render_analytics():
 
     # --- income and savings (per month, whatever the period above)
     st.subheader("Income and savings")
-    s = savings(today.strftime("%Y-%m"))
+    s = read("savings", today.strftime("%Y-%m"))
     c1, c2, c3 = st.columns(3)
     c1.metric("Income this month", f"Rs {s['income']:,.0f}")
     c2.metric("Saved this month", f"Rs {s['net']:,.0f}")
     c3.metric("Savings rate", "n/a" if s["rate"] is None else f"{s['rate']:.0f}%")
-    income = an.load_income()
+    income = read("income")
     if income.empty:
         st.caption("No income yet. Add it in the Plan tab or say \"got salary 50000\" in Chat.")
     else:
@@ -652,7 +677,7 @@ def render_analytics():
         )
 
     st.subheader("Card cycles")
-    cards = pd.DataFrame(card_status())
+    cards = pd.DataFrame(read("card_status"))
     cards = cards[cards["statement_day"].notna()] if not cards.empty else cards
     if cards.empty:
         st.caption("Set a card's statement day in the Plan tab to see its cycle.")
@@ -679,7 +704,7 @@ def render_analytics():
 
 def render_llm_usage():
     include_eval = st.checkbox("Include evaluation runs", value=False)
-    df = an.load_llm_calls(include_eval)
+    df = read("llm_calls", include_eval)
     if df.empty:
         st.info("No model calls recorded yet. Send a message in the Chat tab.")
         return
@@ -715,18 +740,16 @@ st.set_page_config(page_title="QORVIAN", layout="wide")
 st.markdown(THEME_CSS, unsafe_allow_html=True)
 require_pin()
 init_db()
-post_due_recurring()
+if post_due_recurring():
+    st.cache_data.clear()
 st.title("QORVIAN")
-for _card in card_status():
+for _card in read("card_status"):
     if _line := due_line(_card, date.today()):
         st.warning(_line)
 
-tab_chat, tab_stats, tab_plan, tab_llm = st.tabs(["Chat", "Analytics", "Plan", "LLM usage"])
-with tab_chat:
-    render_chat()
-with tab_stats:
-    render_analytics()
-with tab_plan:
-    render_plan()
-with tab_llm:
-    render_llm_usage()
+# Only the selected view runs, so a chat message no longer rebuilds every chart.
+VIEWS = {"Chat": render_chat, "Analytics": render_analytics, "Plan": render_plan,
+         "LLM usage": render_llm_usage}
+view = st.segmented_control("View", list(VIEWS), default="Chat", required=True, key="view",
+                            label_visibility="collapsed")
+VIEWS[view]()

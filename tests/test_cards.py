@@ -227,7 +227,7 @@ def test_plan_mark_paid_needs_confirm_and_undo_restores():
         next(b for b in at.button if b.label == label).click().run()
         assert not at.exception
 
-    at = run_app()
+    at = run_app("Plan")
     click(at, "Mark bill paid")
     assert any("as paid?" in w.value for w in at.warning) and paid_through() == "2020-01-01"
     click(at, "Cancel")

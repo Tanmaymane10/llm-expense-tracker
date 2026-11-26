@@ -3,6 +3,7 @@ import os
 os.environ.setdefault("GEMINI_API_KEY", "test-key")  # the real client is never created in tests
 
 import pytest  # noqa: E402
+import streamlit as st  # noqa: E402
 from helpers import FakeResp  # noqa: E402
 
 import core  # noqa: E402
@@ -15,6 +16,7 @@ def fresh_state(tmp_path, monkeypatch):
     monkeypatch.setattr(core, "RATE_LIMIT_MESSAGES", 5)
     core._hits.clear()
     core.init_db()
+    st.cache_data.clear()  # the app caches reads per process; start each test cold
 
 
 @pytest.fixture
