@@ -30,37 +30,38 @@ def build_message(today: date = None) -> str:
 
     lines = [
         f"Week {start:%d %b} to {today:%d %b}",
-        f"Spent Rs {k['total']:,.0f} in {k['transactions']} purchases "
-        f"(Rs {k['avg_per_day']:,.0f}/day)",
+        f"Spent {core.inr(k['total'])} in {k['transactions']} purchases "
+        f"({core.inr(round(k['avg_per_day']))}/day)",
     ]
     if prev_total:
         d = k["total"] - prev_total
         word = "Up" if d > 0 else "Down"
         pct = 100 * d / prev_total
-        lines.append(f"{word} Rs {abs(d):,.0f} ({pct:+.0f}%) vs the week before")
+        lines.append(f"{word} {core.inr(abs(d))} ({pct:+.0f}%) vs the week before")
     if k["transactions"]:
-        lines.append(f"Top category: {k['top_category']} (Rs {k['top_category_amount']:,.0f})")
+        lines.append(f"Top category: {k['top_category']} ({core.inr(k['top_category_amount'])})")
         big = an.biggest_expenses(cur, 1)
         if not big.empty:
-            lines.append(f"Biggest: {big.iloc[0]['item']} (Rs {big.iloc[0]['amount_inr']:,.0f})")
+            lines.append(f"Biggest: {big.iloc[0]['item']} ({core.inr(big.iloc[0]['amount_inr'])})")
         rows = list(cur.sort_values("spent_at").itertuples())
         lines += ["", "All purchases:"]
         # Telegram caps a message at 4096 chars
-        lines += [f"{r.spent_at:%a %d}  {r.item}  Rs {r.amount_inr:,.0f}" for r in rows[:60]]
+        lines += [f"{r.spent_at:%a %d}  {r.item}  {core.inr(r.amount_inr)}" for r in rows[:60]]
         if len(rows) > 60:
             lines.append(f"...and {len(rows) - 60} more")
-        lines.append(f"Total: Rs {k['total']:,.0f}")
+        lines.append(f"Total: {core.inr(k['total'])}")
 
     risky = [b for b in core.budget_status(today) if b["pct"] >= 80]
     if risky:
         lines.append("")
         lines.append("Budgets at 80% or more this month:")
         lines += [
-            f"  {b['category']}: Rs {b['spent']:,.0f} of {b['budget']:,.0f} ({b['pct']:.0f}%)"
+            f"  {b['category']}: {core.inr(b['spent'])} of {core.inr(b['budget'])} "
+            f"({b['pct']:.0f}%)"
             for b in risky
         ]
 
-    lines += ["", f"Month-end pace: Rs {an.month_projection(df, today):,.0f}"]
+    lines += ["", f"Month-end pace: {core.inr(round(an.month_projection(df, today)))}"]
     return "\n".join(lines)
 
 

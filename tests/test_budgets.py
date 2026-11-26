@@ -21,7 +21,7 @@ def alert_lines(reply):
 
 # ---------------------------------------------------------------- set_budget
 def test_set_budget_upserts_and_zero_removes():
-    assert core.set_budget("food", 6000) == "Budget set: food Rs 6,000/month."
+    assert core.set_budget("food", 6000) == "Budget set: food ₹6,000/month."
     core.set_budget("food", 7000)
     assert query("SELECT category, amount_inr FROM budgets") == [("food", 7000.0)]
     assert core.set_budget("food", 0) == "Budget removed: food."
@@ -41,7 +41,7 @@ def test_set_budget_rejects_bad_values(category, amount):
 def test_two_items_in_one_batch_give_a_single_step_line():
     core.set_budget("food", 6000)
     reply = spend(2000, 1500)
-    assert alert_lines(reply) == [f"Food: 58% of Rs 6,000 used, {core._days_left(date.today())} "
+    assert alert_lines(reply) == [f"Food: 58% of ₹6,000 used, {core._days_left(date.today())} "
                                   "days left"]
 
 
@@ -51,8 +51,8 @@ def test_steps_fire_once_then_over_budget_repeats():
     assert alert_lines(spend(100)) == []                # still between 50 and 80
     assert "82% of" in spend(1800)                      # crosses 80 (4,900 of 6,000)
     assert "100% of" in spend(1100)                     # exactly 6,000
-    assert alert_lines(spend(10)) == ["Food: over budget by Rs 10 (Rs 6,010 of Rs 6,000)"]
-    assert alert_lines(spend(5)) == ["Food: over budget by Rs 15 (Rs 6,015 of Rs 6,000)"]
+    assert alert_lines(spend(10)) == ["Food: over budget by ₹10 (₹6,010 of ₹6,000)"]
+    assert alert_lines(spend(5)) == ["Food: over budget by ₹15 (₹6,015 of ₹6,000)"]
 
 
 def test_no_budget_and_backdated_rows_give_no_alert():
@@ -66,7 +66,7 @@ def test_no_budget_and_backdated_rows_give_no_alert():
 def test_overall_budget_counts_every_category():
     core.set_budget("overall", 1000)
     reply = spend(300, category="food") and spend(300, category="transport")
-    assert alert_lines(reply) == [f"Overall: 60% of Rs 1,000 used, "
+    assert alert_lines(reply) == [f"Overall: 60% of ₹1,000 used, "
                                   f"{core._days_left(date.today())} days left"]
 
 
@@ -75,7 +75,7 @@ def test_refund_is_negative_lowers_spend_and_never_alerts():
     spend(1200)
     reply = spend(500, is_refund=True, item="Pizza")
     assert alert_lines(reply) == []
-    assert "refund: pizza: Rs -500" in reply
+    assert "refund: pizza: -₹500" in reply
     assert query("SELECT item, amount_inr FROM expenses WHERE amount_inr < 0") == [
         ("refund: pizza", -500.0)]
     assert core.budget_status()[0]["spent"] == 700
@@ -83,7 +83,7 @@ def test_refund_is_negative_lowers_spend_and_never_alerts():
 
 @pytest.mark.parametrize("given", ["swiggy order refund", "Refund: swiggy order"])
 def test_refund_item_is_prefixed_once(given):
-    assert "- refund: swiggy order: Rs -50" in spend(50, is_refund=True, item=given)
+    assert "- refund: swiggy order: -₹50" in spend(50, is_refund=True, item=given)
 
 
 def test_update_keeps_refund_negative():
@@ -99,8 +99,8 @@ def test_get_status_budgets_text():
     core.set_budget("overall", 500)
     spend(600)
     text = core.get_status("budgets")
-    assert "- Food: Rs 600 of Rs 1,000 (60%), Rs 400 left" in text
-    assert "- Overall: Rs 600 of Rs 500 (120%), over by Rs 100" in text
+    assert "- Food: ₹600 of ₹1,000 (60%), ₹400 left" in text
+    assert "- Overall: ₹600 of ₹500 (120%), over by ₹100" in text
     with pytest.raises(ValueError):
         core.get_status("weather")
 
@@ -121,8 +121,8 @@ def test_set_budget_and_expense_in_one_response_both_run(script):
     log = script([("set_budget", {"category": "food", "amount_inr": 1000}),
                   ("add_expenses", {"expenses": [good_expense(spent_at=NOW, amount_inr=600)]})])
     reply = turn("food budget 1000, and lunch 600")
-    assert "Budget set: food Rs 1,000/month." in reply
-    assert "Saved:" in reply and "Food: 60% of Rs 1,000 used" in reply
+    assert "Budget set: food ₹1,000/month." in reply
+    assert "Saved:" in reply and "Food: 60% of ₹1,000 used" in reply
     assert count_rows() == 1 and count_rows("budgets") == 1 and len(log) == 1
 
 
@@ -132,7 +132,7 @@ def test_saved_text_survives_a_failed_tool_in_the_same_turn(script):
                   ("set_budget", {"category": "food", "amount_inr": -10})],
                  [("reply_to_user", {"message": "Budgets must be above 0."})])
     reply = turn("lunch 600, and food budget -10")
-    assert "Saved:" in reply and "Food: 60% of Rs 1,000 used" in reply
+    assert "Saved:" in reply and "Food: 60% of ₹1,000 used" in reply
     assert reply.endswith("Budgets must be above 0.")
     assert count_rows() == 1 and len(log) == 2
 
@@ -162,4 +162,4 @@ def test_confirmation_shows_validated_values(script):
         item="  Chai   Latte ", amount_inr="15", category="nonsense",
         card_name="hdfc moneyback")]})])
     reply = turn("chai latte 15 on hdfc moneyback")
-    assert "- chai latte: Rs 15 (other, 2026-10-03 09:00, HDFC MoneyBack)" in reply
+    assert "- chai latte: ₹15 (other, 2026-10-03 09:00, HDFC MoneyBack)" in reply

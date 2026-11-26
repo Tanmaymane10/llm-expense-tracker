@@ -335,7 +335,7 @@ def register_card(card_name: str, statement_day=None, due_day=None, credit_limit
             updates["due_day"] = _check_day(due_day)
         if credit_limit is not None:
             updates["credit_limit"] = _check_amount(credit_limit)
-        parts = [f"{k.replace('_', ' ')} {_rs(v) if k == 'credit_limit' else v}"
+        parts = [f"{k.replace('_', ' ')} {inr(v) if k == 'credit_limit' else v}"
                  for k, v in updates.items()]
         if bill_paid is True:
             sday, dday = conn.execute("SELECT statement_day, due_day FROM credit_cards "
@@ -347,7 +347,7 @@ def register_card(card_name: str, statement_day=None, due_day=None, credit_limit
             updates["paid_through"] = c["prev_end"].isoformat()
             amount = _card_spend(conn, card_id, c["prev_start"], c["prev_end"])
             parts.append(f"bill for {_short(c['prev_start'])}-{_short(c['prev_end'])} "
-                         f"({_rs(amount)}) marked paid")
+                         f"({inr(amount)}) marked paid")
         conn.execute(f"UPDATE credit_cards SET {', '.join(f'{k} = ?' for k in updates)} "
                      "WHERE id = ?", [*updates.values(), card_id])
     return f"{name}: {', '.join(parts)}."
@@ -424,8 +424,8 @@ def due_line(c: dict, today: date):
     if (c["due_date"] - today).days > DUE_SOON_DAYS:
         return None
     when = ("overdue since" if c["due_date"] < today else "due on") + f" {_short(c['due_date'])}"
-    return (f"{c['card']}: {_rs(c['amount_due'])} {when} "
-            f"({_rs(c['spent_cycle'])} spent this cycle)")
+    return (f"{c['card']}: {inr(c['amount_due'])} {when} "
+            f"({inr(c['spent_cycle'])} spent this cycle)")
 
 
 def due_notes(today: date = None) -> list:
@@ -445,10 +445,10 @@ def _card_status_line(c: dict) -> str:
         return f"{c['card']}: no statement day set."
     when = (f"due {_short(c['due_date'])}" if c["due_date"]
             else f"statement {_short(c['prev_end'])}")
-    line = (f"{c['card']}: {_rs(c['amount_due'])} {when}, {'paid' if c['paid'] else 'unpaid'}; "
-            f"{_rs(c['spent_cycle'])} spent this cycle")
+    line = (f"{c['card']}: {inr(c['amount_due'])} {when}, {'paid' if c['paid'] else 'unpaid'}; "
+            f"{inr(c['spent_cycle'])} spent this cycle")
     if c["limit"]:
-        line += f"; {c['utilisation']:.0f}% of {_rs(c['limit'])} limit"
+        line += f"; {c['utilisation']:.0f}% of {inr(c['limit'])} limit"
     return line + "."
 
 def _resolve_card(conn, card_name, payment_method):
@@ -500,7 +500,7 @@ def add_expenses(expenses: list, raw_text: str) -> str:
 
             # The reply shows the validated values, not the model's raw arguments.
             card_txt = f", {card_name}" if card_id else ""
-            lines.append(f"- {item}: Rs {amount:g} ({category}, {spent_at}{card_txt})")
+            lines.append(f"- {item}: {inr(amount)} ({category}, {spent_at}{card_txt})")
             rows.append(
                 (
                     spent_at,
@@ -545,8 +545,16 @@ def undo_expenses(snapshot: list) -> tuple:
 
 
 # ---------------------------------------------------------------- budgets
-def _rs(x: float) -> str:
-    return f"Rs {x:,.0f}"
+def inr(x: float) -> str:
+    """Money for display: Indian digit grouping (₹1,25,000), paise only when not zero
+    (₹14.55, ₹14.50), sign before the symbol (-₹130)."""
+    paise_total = round(abs(float(x)) * 100)
+    rupees, paise = divmod(paise_total, 100)
+    out, digits = str(rupees)[-3:], str(rupees)[:-3]
+    while digits:  # then groups of two: 1,25,000 / 10,00,000
+        out, digits = f"{digits[-2:]},{out}", digits[:-2]
+    sign = "-" if x < 0 and paise_total else ""
+    return f"{sign}₹{out}" + (f".{paise:02d}" if paise else "")
 
 
 def _month_spend(conn, month: str) -> dict:
@@ -577,7 +585,7 @@ def set_budget(category: str, amount_inr) -> str:
         conn.execute("INSERT INTO budgets (category, amount_inr) VALUES (?, ?) "
                      "ON CONFLICT(category) DO UPDATE SET amount_inr = excluded.amount_inr",
                      (category, amount))
-    return f"Budget set: {category} {_rs(amount)}/month."
+    return f"Budget set: {category} {inr(amount)}/month."
 
 
 def budget_status(today: date = None) -> list:
@@ -610,10 +618,10 @@ def budget_alerts(conn, rows: list, today: date = None) -> list:
         limit, after = budgets[cat], spend.get(cat, 0.0)
         before = after - batch[cat]
         if after > limit:  # repeated on every further expense
-            lines.append(f"{cat.capitalize()}: over budget by {_rs(after - limit)} "
-                         f"({_rs(after)} of {_rs(limit)})")
+            lines.append(f"{cat.capitalize()}: over budget by {inr(after - limit)} "
+                         f"({inr(after)} of {inr(limit)})")
         elif any(before * 100 < s * limit <= after * 100 for s in BUDGET_STEPS):
-            lines.append(f"{cat.capitalize()}: {after * 100 / limit:.0f}% of {_rs(limit)} used, "
+            lines.append(f"{cat.capitalize()}: {after * 100 / limit:.0f}% of {inr(limit)} used, "
                          f"{_days_left(today)} days left")
     return lines
 
@@ -628,7 +636,7 @@ def add_income(amount_inr, source: str, received_at=None, note=None, raw_text: s
         conn.execute("INSERT INTO income (received_at, source, amount_inr, note, raw_text) "
                      "VALUES (?, ?, ?, ?, ?)", (when, source, amount, note, raw_text))
     day = datetime.strptime(when, "%Y-%m-%d %H:%M")
-    return f"Saved income: {source} {_rs(amount)} on {day.day} {day:%b}."
+    return f"Saved income: {source} {inr(amount)} on {day.day} {day:%b}."
 
 
 def delete_income(income_id: int) -> bool:
@@ -760,7 +768,7 @@ def _check_date(value) -> str:
 def _logged_today(conn, rule_id: int, today: date) -> str:
     row = conn.execute("SELECT amount_inr FROM expenses WHERE recurring_id = ? AND "
                        "date(spent_at) = ?", (rule_id, today.isoformat())).fetchone()
-    return f" Logged today's {_rs(row[0])}." if row else ""
+    return f" Logged today's {inr(row[0])}." if row else ""
 
 
 def manage_subscription(action: str, item: str, amount_inr=None, category=None, frequency=None,
@@ -819,7 +827,7 @@ def manage_subscription(action: str, item: str, amount_inr=None, category=None, 
         r = _rules(conn, "r.id = ?", (rule_id,))[0]
         card = f", {r['card_name']}" if r["card_name"] else ""
         nxt = next_due(r)
-        return (f"{verb} {item}: {_rs(r['amount_inr'])} {_schedule(r)} ({r['category']}{card})."
+        return (f"{verb} {item}: {inr(r['amount_inr'])} {_schedule(r)} ({r['category']}{card})."
                 f"{_logged_today(conn, rule_id, today)} Next: {_short(nxt) if nxt else '-'}.")
 
 
@@ -880,12 +888,12 @@ def _subscriptions_text() -> str:
     if not rules:
         return "No subscriptions yet. Example: 'netflix 649 every month on the 5th'."
     active = [r for r in rules if r["status"] == "active"]
-    lines = [f"Fixed costs: {_rs(sum(r['monthly'] for r in active))}/month "
+    lines = [f"Fixed costs: {inr(sum(r['monthly'] for r in active))}/month "
              f"({len(active)} active)."]
     for r in sorted(rules, key=lambda r: (r["status"] != "active", r["next_due"] or date.max)):
-        tail = (f"next {_short(r['next_due'])} ({_rs(r['monthly'])}/month)"
+        tail = (f"next {_short(r['next_due'])} ({inr(r['monthly'])}/month)"
                 if r["status"] == "active" else "paused")
-        lines.append(f"- {r['item']}: {_rs(r['amount_inr'])} {r['schedule']}, {tail}")
+        lines.append(f"- {r['item']}: {inr(r['amount_inr'])} {r['schedule']}, {tail}")
     return "\n".join(lines)
 
 
@@ -899,8 +907,8 @@ def get_status(topic: str, month: str = None) -> str:
             raise ValueError(f"Invalid month {month!r}. Use YYYY-MM.") from None
         s = savings(first.strftime("%Y-%m"))
         rate = "n/a" if s["rate"] is None else f"{s['rate']:.0f}%"
-        return (f"{first:%B %Y}: income {_rs(s['income'])}, expenses {_rs(s['expenses'])}, "
-                f"net {_rs(s['net'])}, savings rate {rate}.")
+        return (f"{first:%B %Y}: income {inr(s['income'])}, expenses {inr(s['expenses'])}, "
+                f"net {inr(s['net'])}, savings rate {rate}.")
     if topic == "cards":
         return "\n".join(map(_card_status_line, card_status())) or "No cards registered."
     if topic != "budgets":
@@ -912,9 +920,9 @@ def get_status(topic: str, month: str = None) -> str:
     lines = [f"Budgets for {today:%B %Y}, {_days_left(today)} days left:"]
     for r in rows:
         left = r["budget"] - r["spent"]
-        tail = f"{_rs(left)} left" if left >= 0 else f"over by {_rs(-left)}"
-        lines.append(f"- {r['category'].capitalize()}: {_rs(r['spent'])} of "
-                     f"{_rs(r['budget'])} ({r['pct']:.0f}%), {tail}")
+        tail = f"{inr(left)} left" if left >= 0 else f"over by {inr(-left)}"
+        lines.append(f"- {r['category'].capitalize()}: {inr(r['spent'])} of "
+                     f"{inr(r['budget'])} ({r['pct']:.0f}%), {tail}")
     return "\n".join(lines)
 
 
@@ -1619,6 +1627,9 @@ _LOCAL_BLOCK = set("""
 """.split())
 
 
+LOCAL_MIN_SEEN = 2  # times an item must already be saved before the local path handles it
+
+
 def _parse_local(text: str, cards: list) -> list | None:
     """[(item, amount)] if the whole message is 'item amount' pairs, else None. Pure."""
     text = " ".join(str(text).lower().split())
@@ -1639,9 +1650,8 @@ def _parse_local(text: str, cards: list) -> list | None:
 
 def _local_turn(history: list, user_text: str) -> str | None:
     """Save a plain 'item amount' message with no model call, or None to use the model.
-    The category is the one last saved for the same item; an unknown item -> model."""
-    # shortcut: items are saved as typed, so a typo the model once stored verbatim ("petorl")
-    # repeats here instead of being corrected; add a typo check if the replay shows mismatches.
+    The category is the one last saved for the same item. An item saved fewer than
+    LOCAL_MIN_SEEN times goes to the model, so a typo stored once ("petorl") isn't repeated."""
     if history and history[-1]["role"] == "assistant" and \
             history[-1]["content"].rstrip().endswith("?"):
         return None  # the model asked something; this message may be the answer
@@ -1654,13 +1664,15 @@ def _local_turn(history: list, user_text: str) -> str | None:
         rows = []
         with get_conn() as conn:
             for item, amount in pairs:
-                hit = conn.execute("SELECT category FROM expenses WHERE LOWER(item) = ? AND "
-                                   "amount_inr > 0 ORDER BY id DESC LIMIT 1",
-                                   (_check_item(item),)).fetchone()
-                if hit is None:
+                category, seen = conn.execute(
+                    "SELECT (SELECT category FROM expenses WHERE LOWER(item) = :i AND "
+                    "amount_inr > 0 ORDER BY id DESC LIMIT 1), (SELECT COUNT(*) FROM expenses "
+                    "WHERE LOWER(item) = :i AND amount_inr > 0)", {"i": _check_item(item)}
+                ).fetchone()
+                if seen < LOCAL_MIN_SEEN:
                     return None
                 rows.append({"spent_at": now, "item": item, "amount_inr": amount,
-                             "category": hit[0]})
+                             "category": category})
         reply = add_expenses(rows, user_text)  # same validation as the model's tool call
     except Exception:  # add_expenses validates before inserting, so nothing was saved
         return None

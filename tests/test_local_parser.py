@@ -48,13 +48,14 @@ def _no_model(monkeypatch):
 
 def test_known_items_save_locally_with_history_category(monkeypatch):
     insert_expense("chai", 20, "food")
+    insert_expense("chai", 20, "food")
     insert_expense("metro", 30, "transport")
     insert_expense("metro", 30, "bills")  # the most recent category wins
     _no_model(monkeypatch)
     reply = turn("chai 15, Metro 40")
-    assert reply.startswith("Saved:\n- chai: Rs 15 (food, ")
-    assert "- metro: Rs 40 (bills, " in reply
-    assert query("SELECT item, amount_inr, category, raw_text FROM expenses WHERE id > 3") == [
+    assert reply.startswith("Saved:\n- chai: ₹15 (food, ")
+    assert "- metro: ₹40 (bills, " in reply
+    assert query("SELECT item, amount_inr, category, raw_text FROM expenses WHERE id > 4") == [
         ("chai", 15.0, "food", "chai 15, Metro 40"), ("metro", 40.0, "bills", "chai 15, Metro 40")]
     assert query("SELECT purpose, status, total_tokens, attempts FROM llm_calls") == [
         ("local", "ok", 0, 0)]
@@ -66,6 +67,16 @@ def test_one_unknown_item_sends_the_whole_message_to_the_model(script):
                                                   "amount_inr": 15, "category": "food"}]})])
     turn("chai 15 and samosa 20")
     assert len(log) == 1 and count_rows() == 2  # model was called; nothing saved locally twice
+
+
+def test_item_saved_only_once_goes_to_the_model(script):
+    insert_expense("petorl", 200, "transport")  # a typo stored once must not be repeated
+    log = script([("add_expenses", {"expenses": [{"spent_at": "2026-10-03 09:00",
+                                                  "item": "petrol", "amount_inr": 200,
+                                                  "category": "transport"}]})])
+    turn("petorl 200")
+    assert len(log) == 1
+    assert query("SELECT item FROM expenses ORDER BY id") == [("petorl",), ("petrol",)]
 
 
 def test_refund_history_does_not_count(script):
@@ -93,6 +104,7 @@ def test_amount_over_the_limit_falls_back_to_the_model(script):
 
 def test_guardrails_still_run_first(monkeypatch):
     insert_expense("chai", 20, "food")
+    insert_expense("chai", 20, "food")
     _no_model(monkeypatch)
     assert core.chat_turn([], "chai 15 " + "x" * 400, "u-long").startswith("That message is too")
     for _ in range(core.RATE_LIMIT_MESSAGES):
@@ -102,6 +114,7 @@ def test_guardrails_still_run_first(monkeypatch):
 
 def test_local_saves_stay_out_of_call_metrics(monkeypatch):
     core._log_llm_call("chat", "ok", time.perf_counter(), 1, resp=FakeResp([], usage()))
+    insert_expense("chai", 20, "food")
     insert_expense("chai", 20, "food")
     _no_model(monkeypatch)
     turn("chai 15")
@@ -161,9 +174,10 @@ def test_replay_script_reports_handled_and_mismatches():
     say("chai 20", ("chai", 20, "food"))                                 # no history yet
     say("metro 40 and chai 15", ("metro", 40, "transport"), ("chai", 15, "food"))  # metro new
     say("chai 10", ("chai", 10, "food"), when="2026-11-02 09:00")        # handled, matches
+    say("metro 45", ("metro", 45, "transport"), when="2026-11-02 09:30")  # metro seen once
     say("metro 50", ("metro", 50, "bills"), when="2026-11-02 10:00")     # handled, mismatch
     say("auto: recurring", ("netflix", 649, "entertainment"))            # not a message
     r = replay.replay(core.DB_PATH)
-    assert (r["messages"], r["handled"]) == (4, 2)
+    assert (r["messages"], r["handled"]) == (5, 2)
     assert [m["text"] for m in r["mismatches"]] == ["metro 50"]
-    assert count_rows() == 6  # read-only: nothing written
+    assert count_rows() == 7  # read-only: nothing written

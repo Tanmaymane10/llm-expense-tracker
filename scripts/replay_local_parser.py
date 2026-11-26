@@ -40,15 +40,16 @@ def replay(db_path: str) -> dict:
     handled, mismatches = 0, []
     for (text, _minute), saved in groups.items():
         first_id = saved[0][0]
-        history = {}  # item -> category of the most recent earlier positive row
+        history, seen = {}, Counter()  # item -> latest earlier category / times saved
         for r in rows:
             if r[0] >= first_id:
                 break
             if r[4] > 0:
                 history[core._check_item(r[3])] = r[5]
+                seen[core._check_item(r[3])] += 1
         pairs = core._parse_local(text, cards)
-        if not pairs or any(core._check_item(i) not in history for i, _ in pairs):
-            continue
+        if not pairs or any(seen[core._check_item(i)] < core.LOCAL_MIN_SEEN for i, _ in pairs):
+            continue  # same rule as core._local_turn
         handled += 1
         local = Counter((core._check_item(i), float(a), history[core._check_item(i)], None, None)
                         for i, a in pairs)

@@ -47,7 +47,7 @@ def test_card_cycle(sday, dday, today, expected):
 def test_settings_update_existing_card_and_new_card_still_registers():
     assert "Registered" in core.register_card("Axis Flipkart")
     reply = core.register_card("axis flipkart", statement_day=15, due_day=5, credit_limit=30000)
-    assert reply == "Axis Flipkart: statement day 15, due day 5, credit limit Rs 30,000."
+    assert reply == "Axis Flipkart: statement day 15, due day 5, credit limit ₹30,000."
     assert query("SELECT statement_day, due_day, credit_limit FROM credit_cards "
                  "WHERE card_name = 'Axis Flipkart'") == [(15, 5, 30000.0)]
     assert "already registered" in core.register_card("AXIS FLIPKART")
@@ -119,8 +119,8 @@ def test_due_note_once_per_day_and_bill_paid_silences_it():
     c = setup_due_soon()
     spend(c["prev_end"], 8420)
     spend(TODAY, 1200)
-    expected = (f"HDFC MoneyBack: Rs 8,420 due on {c['due_date'].day} {c['due_date']:%b} "
-                "(Rs 1,200 spent this cycle)")
+    expected = (f"HDFC MoneyBack: ₹8,420 due on {c['due_date'].day} {c['due_date']:%b} "
+                "(₹1,200 spent this cycle)")
     assert core.due_notes() == [expected]
     assert core.due_notes() == []  # stamped for today
     expenses, income = count_rows(), count_rows("income")
@@ -139,7 +139,7 @@ def test_overdue_line_and_far_due_has_none():
                       "VALUES ('2026-11-01 10:00', 'tv', 8420, 'shopping', ?)", (card_id(),))
     s = core.card_status(D("2026-12-10"))[0]
     assert core.due_line(s, D("2026-12-10")).startswith(
-        "HDFC MoneyBack: Rs 8,420 overdue since 5 Dec")
+        "HDFC MoneyBack: ₹8,420 overdue since 5 Dec")
     s = core.card_status(D("2026-11-19"))[0]
     assert s["amount_due"] == 8420 and core.due_line(s, D("2026-11-19")) is None
 
@@ -153,8 +153,8 @@ def test_get_status_cards_line():
     c = setup_due_soon()
     spend(c["prev_end"], 8420)
     line = core.get_status("cards").splitlines()[0]
-    assert line == (f"HDFC MoneyBack: Rs 8,420 due {c['due_date'].day} {c['due_date']:%b}, "
-                    "unpaid; Rs 0 spent this cycle; 42% of Rs 20,000 limit.")
+    assert line == (f"HDFC MoneyBack: ₹8,420 due {c['due_date'].day} {c['due_date']:%b}, "
+                    "unpaid; ₹0 spent this cycle; 42% of ₹20,000 limit.")
 
 
 # ---------------------------------------------------------------- chat wiring
@@ -185,7 +185,7 @@ def test_due_notes_appended_to_chat_reply_once(script):
     spend(c["prev_end"], 500)
     script([("reply_to_user", {"message": "Hi!"})], [("reply_to_user", {"message": "Hi!"})])
     first, second = turn("hi"), turn("hi")
-    assert first.startswith("Hi!\n\nHDFC MoneyBack: Rs 500 due on") and second == "Hi!"
+    assert first.startswith("Hi!\n\nHDFC MoneyBack: ₹500 due on") and second == "Hi!"
 
 
 def test_quota_reply_gets_no_notes(script, monkeypatch):

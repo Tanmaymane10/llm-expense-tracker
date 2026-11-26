@@ -87,9 +87,9 @@ def test_plan_subscriptions_click_through():
     status = lambda: query("SELECT amount_inr, status, card_id FROM recurring")[0]  # noqa: E731
     at = run_app("Plan")
 
-    # update the amount through the form (the first "Amount (Rs)" is the subscription form's)
+    # update the amount through the form (the first "Amount (₹)" is the subscription form's)
     _widget(at.selectbox, "Add or update").set_value("netflix").run()
-    _widget(at.number_input, "Amount (Rs)").set_value(799.0)
+    _widget(at.number_input, "Amount (₹)").set_value(799.0)
     _widget(at.button, "Save subscription").click().run()
     assert not at.exception and status() == (799.0, "active", 1)
 
@@ -172,19 +172,35 @@ def test_chat_save_clears_the_cache_so_analytics_is_fresh(monkeypatch):
     at = run_app("Analytics")
     total = lambda: _widget(at.metric, "Total spent").value  # noqa: E731
 
-    assert total() == "Rs 15"
+    assert total() == "₹15"
     insert_expense("auto", 80, "transport", f"{date.today()} 10:00")  # cached: not seen yet
-    assert go(at, "Chat") and go(at, "Analytics") and total() == "Rs 15"
+    assert go(at, "Chat") and go(at, "Analytics") and total() == "₹15"
 
     monkeypatch.setattr(core, "chat_turn", lambda history, text, key: "Saved")
     go(at, "Chat").chat_input[0].set_value("auto 80").run()
-    assert go(at, "Analytics") and total() == "Rs 95"
+    assert go(at, "Analytics") and total() == "₹95"
 
 
 def test_plan_write_clears_the_cache():
     from helpers import query
     at = run_app("Plan")
-    _widget(at.number_input, "Amount (Rs)", 1).set_value(5000.0)  # the income form's
+    _widget(at.number_input, "Amount (₹)", 1).set_value(5000.0)  # the income form's
     _widget(at.button, "Add income").click().run()
     assert query("SELECT amount_inr FROM income") == [(5000.0,)]
     assert at.dataframe[-1].value["amount_inr"].tolist() == [5000.0]  # redrawn from fresh data
+
+
+def test_analytics_period_survives_a_view_switch():
+    from datetime import timedelta
+    insert_expense("chai", 15, "food", f"{date.today()} 09:00")
+    at = run_app("Analytics")
+    at.radio[0].set_value("Last 90 days").run()
+    go(go(at, "Plan"), "Analytics")
+    assert at.radio[0].value == "Last 90 days"
+
+    at.radio[0].set_value("Custom").run()
+    picked = (date.today() - timedelta(days=5), date.today())
+    at.date_input[0].set_value(picked).run()
+    go(go(at, "Chat"), "Analytics")
+    assert at.radio[0].value == "Custom" and tuple(at.date_input[0].value) == picked
+    assert not at.exception

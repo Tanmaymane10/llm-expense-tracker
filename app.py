@@ -25,6 +25,7 @@ from core import (
     due_line,
     get_conn,
     init_db,
+    inr,
     list_cards,
     manage_subscription,
     post_due_recurring,
@@ -240,7 +241,7 @@ def budget_chart(df: pd.DataFrame):
     """df from an.budget_progress(): % of each budget used, coloured by state, line at 100%."""
     pairs = zip(df["spent"], df["budget"], strict=True)
     data = df.assign(label=df["category"].str.capitalize(),
-                     text=[f"Rs {s:,.0f} / {b:,.0f}" for s, b in pairs])
+                     text=[f"{inr(s)} / {inr(b)}" for s, b in pairs])
     y = alt.Y("label:N", sort=None, title=None, axis=alt.Axis(grid=False))
     x = alt.X("pct:Q", title=None, axis=alt.Axis(format=".0f", labelExpr="datum.label + '%'",
                                            tickCount=6, labelFlush=True),
@@ -249,13 +250,13 @@ def budget_chart(df: pd.DataFrame):
         x=x, y=y,
         color=alt.Color("state:N", legend=None, scale=alt.Scale(
             domain=["ok", "warn", "over"], range=[ACCENT, "#fbbf24", "#f87171"])),
-        tooltip=["label", alt.Tooltip("spent:Q", format=",.0f", title="Spent (Rs)"),
-                 alt.Tooltip("budget:Q", format=",.0f", title="Budget (Rs)"),
+        tooltip=["label", alt.Tooltip("spent:Q", format=",.0f", title="Spent (₹)"),
+                 alt.Tooltip("budget:Q", format=",.0f", title="Budget (₹)"),
                  alt.Tooltip("pct:Q", format=".0f", title="% used")])
     text = bars.mark_text(align="left", dx=6, color=MUTED).encode(text="text:N")
     limit = alt.Chart(pd.DataFrame({"pct": [100]})).mark_rule(
         color=MUTED, strokeDash=[4, 4]).encode(x="pct:Q")
-    # right padding leaves room for the "Rs spent / budget" label past the longest bar
+    # right padding leaves room for the "₹spent / ₹budget" label past the longest bar
     return _style((bars + text + limit).properties(
         height=40 * len(data) + 20, padding={"left": 5, "top": 5, "bottom": 5, "right": 110}))
 
@@ -295,6 +296,11 @@ def read(name: str, *args):
     return _cached(name, core.DB_PATH, *args)
 
 
+def _money(df: pd.DataFrame, *cols):
+    """Show `cols` as ₹ text; the data stays numeric underneath, so sorting still works."""
+    return df.style.format(inr, subset=[c for c in cols if c in df.columns], na_rep="")
+
+
 def _after_write(msg: str):
     """Toast, drop cached reads so the redraw shows the change, then rerun."""
     st.toast(msg)
@@ -313,14 +319,14 @@ def render_subscriptions():
         rows = [{**r, "next_due": f"{r['next_due'].day} {r['next_due']:%b %Y}"
                  if r["next_due"] else ""} for r in subs]
         st.dataframe(
-            pd.DataFrame(rows)[["item", "amount_inr", "schedule", "next_due", "monthly",
-                                "card_name", "status"]].fillna(""),
+            _money(pd.DataFrame(rows)[["item", "amount_inr", "schedule", "next_due", "monthly",
+                                       "card_name", "status"]].fillna(""),
+                   "amount_inr", "monthly"),
             hide_index=True, width="stretch",
             column_config={
                 "item": "Item", "schedule": "Renews", "next_due": "Next due",
                 "card_name": "Card", "status": "Status",
-                "amount_inr": st.column_config.NumberColumn("Amount (Rs)", format="%.0f"),
-                "monthly": st.column_config.NumberColumn("Per month (Rs)", format="%.0f"),
+                "amount_inr": "Amount (₹)", "monthly": "Per month (₹)",
             })
     names = [r["item"] for r in subs]
     pick = st.selectbox("Add or update", ["New subscription"] + names)
@@ -328,7 +334,7 @@ def render_subscriptions():
     with st.form("sub_form"):
         c1, c2, c3 = st.columns(3)
         item = c1.text_input("Item", value=pick if cur else "", disabled=bool(cur), max_chars=80)
-        amount = c2.number_input("Amount (Rs)", 0.0, float(MAX_AMOUNT_INR), step=100.0,
+        amount = c2.number_input("Amount (₹)", 0.0, float(MAX_AMOUNT_INR), step=100.0,
                                  value=float(cur["amount_inr"]) if cur else 0.0, format="%.0f")
         category = c3.selectbox("Category", CATEGORIES, index=CATEGORIES.index(
             cur["category"] if cur else "entertainment"))
@@ -386,7 +392,7 @@ def render_plan():
         table, hide_index=True, width="stretch", key="budgets_editor",
         column_config={
             "category": st.column_config.TextColumn("Category", disabled=True),
-            "budget": st.column_config.NumberColumn("Monthly budget (Rs)", min_value=0,
+            "budget": st.column_config.NumberColumn("Monthly budget (₹)", min_value=0,
                                                     max_value=MAX_AMOUNT_INR, step=500,
                                                     format="%.0f"),
         })
@@ -413,7 +419,7 @@ def render_plan():
                                    step=1, help=day_help)
             dday = c2.number_input("Due day (1-31)", 1, 31, value=c["due_day"], step=1,
                                    help=day_help)
-            limit = c3.number_input("Credit limit (Rs)", 1.0, float(MAX_AMOUNT_INR),
+            limit = c3.number_input("Credit limit (₹)", 1.0, float(MAX_AMOUNT_INR),
                                     value=c["limit"], step=5000.0, format="%.0f",
                                     help="Total limit, not available limit")
             if st.form_submit_button("Save card"):
@@ -423,7 +429,7 @@ def render_plan():
                     st.error(str(e))
         if c["paid"] is False:
             bill = (f"{c['prev_start']:%d %b}-{c['prev_end']:%d %b} "
-                    f"(Rs {c['amount_due']:,.0f})")
+                    f"({inr(c['amount_due'])})")
             st.caption(f"Closed cycle {bill} unpaid.")
             if st.button("Mark bill paid"):
                 st.session_state.confirm_paid = name
@@ -448,7 +454,7 @@ def render_plan():
     st.caption("Salary, freelance or other money received. Refunds and cashback are not income.")
     with st.form("income_form", clear_on_submit=True):
         c1, c2, c3 = st.columns(3)
-        amount = c1.number_input("Amount (Rs)", min_value=0.0, max_value=float(MAX_AMOUNT_INR),
+        amount = c1.number_input("Amount (₹)", min_value=0.0, max_value=float(MAX_AMOUNT_INR),
                                  step=1000.0, format="%.0f")
         source = c2.selectbox("Source", INCOME_SOURCES)
         received = c3.date_input("Received on", value=date.today(), max_value=date.today())
@@ -463,14 +469,14 @@ def render_plan():
     if rows.empty:
         return
     st.caption("Last 10 entries")
-    st.dataframe(rows.drop(columns="month").fillna({"note": ""}), hide_index=True,
+    st.dataframe(_money(rows.drop(columns="month").fillna({"note": ""}), "amount_inr"),
+                 hide_index=True,
                  width="stretch",
                  column_config={"id": "Id", "source": "Source", "note": "Note",
                                 "received_at": st.column_config.DatetimeColumn(
                                     "Received", format="YYYY-MM-DD"),
-                                "amount_inr": st.column_config.NumberColumn(
-                                    "Amount (Rs)", format="%.0f")})
-    labels = {int(r.id): f"#{r.id} {r.received_at:%Y-%m-%d} {r.source} Rs {r.amount_inr:,.0f}"
+                                "amount_inr": "Amount (₹)"})
+    labels = {int(r.id): f"#{r.id} {r.received_at:%Y-%m-%d} {r.source} {inr(r.amount_inr)}"
               for r in rows.itertuples()}
     pick = st.selectbox("Delete an entry", list(labels), format_func=labels.get, index=None,
                         placeholder="Choose an entry")
@@ -530,7 +536,7 @@ def render_undo():
 def render_quick_add():
     """Chips for the most frequent items; one tap opens a prefilled form. No model call."""
     items, opts = read("quick_items"), read("payment_options")
-    labels = [f"{r['item']} · {core._rs(r['amount_inr'])}" for r in items] + ["+ Other"]
+    labels = [f"{r['item']} · {inr(r['amount_inr'])}" for r in items] + ["+ Other"]
     v = st.session_state.get("qa_v", 0)  # bumped after a save, which resets the chips
     pick = st.pills("Quick add", labels, key=f"qa_pick_{v}")
     if pick is None:
@@ -539,7 +545,7 @@ def render_quick_add():
     with st.form(f"qa_form_{v}"):
         item = cur["item"] if cur else st.text_input("Item", max_chars=80)
         c1, c2 = st.columns(2)
-        amount = c1.number_input("Amount (Rs)", 0.0, float(MAX_AMOUNT_INR), step=10.0,
+        amount = c1.number_input("Amount (₹)", 0.0, float(MAX_AMOUNT_INR), step=10.0,
                                  value=float(cur["amount_inr"]) if cur else 0.0)
         category = c2.selectbox("Category", CATEGORIES,
                                 index=CATEGORIES.index(cur["category"] if cur else "other"))
@@ -627,7 +633,7 @@ def render_recent():
             "spent_at": st.column_config.DatetimeColumn("Time", format="YYYY-MM-DD HH:mm",
                                                         required=True),
             "item": st.column_config.TextColumn("Item", max_chars=80, required=True),
-            "amount_inr": st.column_config.NumberColumn("Amount (Rs)", required=True),
+            "amount_inr": st.column_config.NumberColumn("Amount (₹)", required=True),
             "category": st.column_config.SelectboxColumn("Category", options=CATEGORIES,
                                                          required=True),
             "payment": st.column_config.SelectboxColumn(
@@ -680,7 +686,8 @@ def render_analytics():
 
     today = date.today()
     preset = st.radio("Period", ["This month", "Last 30 days", "Last 90 days",
-                                 "All time", "Custom"], horizontal=True)
+                                 "All time", "Custom"], horizontal=True,
+                      key="period", persist_state="session")  # kept while another view shows
     if preset == "This month":
         start, end = today.replace(day=1), today
     elif preset == "Last 30 days":
@@ -690,7 +697,8 @@ def render_analytics():
     elif preset == "All time":
         start, end = df_all["date"].min().date(), max(df_all["date"].max().date(), today)
     else:
-        picked = st.date_input("Date range", value=(today - timedelta(days=29), today))
+        picked = st.date_input("Date range", value=(today - timedelta(days=29), today),
+                               key="period_range", persist_state="session")
         if not (isinstance(picked, (tuple, list)) and len(picked) == 2):
             st.info("Pick both a start and an end date.")
             return
@@ -705,17 +713,18 @@ def render_analytics():
     k = an.kpis(df, start, end)
     mc = an.month_comparison(df_all, today)
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Total spent", f"Rs {k['total']:,.0f}")
-    c2.metric("Average per day", f"Rs {k['avg_per_day']:,.0f}")
+    c1.metric("Total spent", inr(k["total"]))
+    c2.metric("Average per day", inr(round(k["avg_per_day"])))
     c3.metric("Purchases", k["transactions"])
-    c4.metric("Top category", k["top_category"], f"Rs {k['top_category_amount']:,.0f}",
+    c4.metric("Top category", k["top_category"], inr(k["top_category_amount"]),
               delta_color="off")
     c1, c2 = st.columns(2)
     if mc["has_prev"]:
         diff = mc["this"] - mc["prev_same_days"]
         c1.metric("This month so far vs same days last month",
-                  f"Rs {mc['this']:,.0f}", f"{diff:+,.0f} Rs", delta_color="inverse")
-    c2.metric("Projected month-end", f"Rs {an.month_projection(df_all, today):,.0f}",
+                  inr(mc["this"]), ("+" if diff > 0 else "") + inr(diff),
+                  delta_color="inverse")
+    c2.metric("Projected month-end", inr(round(an.month_projection(df_all, today))),
               help="Spending pace so far this month (subscriptions excluded), plus "
                    "subscriptions logged and still due this month.")
 
@@ -731,8 +740,8 @@ def render_analytics():
     st.subheader("Income and savings")
     s = read("savings", today.strftime("%Y-%m"))
     c1, c2, c3 = st.columns(3)
-    c1.metric("Income this month", f"Rs {s['income']:,.0f}")
-    c2.metric("Saved this month", f"Rs {s['net']:,.0f}")
+    c1.metric("Income this month", inr(s["income"]))
+    c2.metric("Saved this month", inr(s["net"]))
     c3.metric("Savings rate", "n/a" if s["rate"] is None else f"{s['rate']:.0f}%")
     income = read("income")
     if income.empty:
@@ -750,10 +759,10 @@ def render_analytics():
     with left:
         st.subheader("Where the money goes")
         st.dataframe(
-            an.category_table(df), hide_index=True, width="stretch",
+            _money(an.category_table(df), "total"), hide_index=True, width="stretch",
             column_config={
                 "category": "Category",
-                "total": st.column_config.NumberColumn("Total (Rs)", format="%.0f"),
+                "total": "Total (₹)",
                 "purchases": "Purchases",
                 "share_pct": st.column_config.ProgressColumn(
                     "Share", format="%.0f%%", min_value=0, max_value=100, color=ACCENT),
@@ -768,15 +777,19 @@ def render_analytics():
         st.subheader("Weekdays vs weekends")
         w = an.weekday_vs_weekend(df, start, end)
         m1, m2 = st.columns(2)
-        m1.metric("Weekday avg / day", f"Rs {w['weekday_avg']:,.0f}")
-        m2.metric("Weekend avg / day", f"Rs {w['weekend_avg']:,.0f}")
+        m1.metric("Weekday avg / day", inr(round(w["weekday_avg"])))
+        m2.metric("Weekend avg / day", inr(round(w["weekend_avg"])))
         st.altair_chart(glass_bar_chart(an.by_weekday(df, start, end)),
                         width="stretch", theme=None)
     with right:
         st.subheader("Top items")
-        st.dataframe(an.top_items(df), hide_index=True, width="stretch")
+        st.dataframe(_money(an.top_items(df), "total"), hide_index=True, width="stretch",
+                     column_config={"item": "Item", "total": "Total (₹)", "times": "Times"})
         st.subheader("Biggest single expenses")
-        st.dataframe(an.biggest_expenses(df), hide_index=True, width="stretch")
+        st.dataframe(_money(an.biggest_expenses(df), "amount_inr"), hide_index=True,
+                     width="stretch",
+                     column_config={"spent_at": "Time", "item": "Item",
+                                    "amount_inr": "Amount (₹)", "category": "Category"})
 
     # --- credit-card spending for the selected period
     st.divider()
@@ -788,24 +801,16 @@ def render_analytics():
         st.info("No recorded credit-card purchases in this period.")
     else:
         total_card_spend = card_summary["total_spend"].sum()
-        st.metric("Total credit-card spending", f"Rs {total_card_spend:,.0f}")
+        st.metric("Total credit-card spending", inr(total_card_spend))
 
         st.caption("Spending by card")
         st.dataframe(
-            card_summary.rename(
-                columns={
-                    "card_name": "Credit card",
-                    "total_spend": "Total spent (Rs)",
-                    "transactions": "Purchases",
-                }
-            ),
+            _money(card_summary.rename(columns={"card_name": "Credit card",
+                                                "total_spend": "Total spent (₹)",
+                                                "transactions": "Purchases"}),
+                   "Total spent (₹)"),
             hide_index=True,
             width="stretch",
-            column_config={
-                "Total spent (Rs)": st.column_config.NumberColumn(
-                    "Total spent (Rs)", format="%.2f"
-                ),
-            },
         )
 
         st.caption("Credit-card transactions")
@@ -815,14 +820,14 @@ def render_analytics():
             if col in card_transactions.columns
         ]
         st.dataframe(
-            card_transactions[transaction_columns].rename(
+            _money(card_transactions[transaction_columns].rename(
                 columns={
                     "spent_at": "Date",
                     "item": "Item",
-                    "amount_inr": "Amount (Rs)",
+                    "amount_inr": "Amount (₹)",
                     "card_name": "Credit card",
                 }
-            ),
+            ), "Amount (₹)"),
             hide_index=True,
             width="stretch",
         )
@@ -834,13 +839,12 @@ def render_analytics():
         st.caption("Set a card's statement day in the Plan tab to see its cycle.")
     else:
         st.dataframe(
-            cards[["card", "amount_due", "due_date", "paid", "spent_cycle", "utilisation"]],
+            _money(cards[["card", "amount_due", "due_date", "paid", "spent_cycle",
+                          "utilisation"]], "amount_due", "spent_cycle"),
             hide_index=True, width="stretch",
             column_config={
                 "card": "Card", "paid": "Paid", "due_date": "Due",
-                "amount_due": st.column_config.NumberColumn("Amount due (Rs)", format="%.0f"),
-                "spent_cycle": st.column_config.NumberColumn("Spent this cycle (Rs)",
-                                                             format="%.0f"),
+                "amount_due": "Amount due (₹)", "spent_cycle": "Spent this cycle (₹)",
                 "utilisation": st.column_config.ProgressColumn(
                     "Limit used", format="%.0f%%", min_value=0, max_value=100, color=ACCENT),
             })

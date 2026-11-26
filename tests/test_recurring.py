@@ -33,7 +33,7 @@ NETFLIX = {"amount_inr": 649, "category": "entertainment", "day": 5}
 
 # ---------------------------------------------------------------- the worked examples
 def test_monthly_example_on_time():
-    assert sub("add", "Netflix", **NETFLIX) == ("Added netflix: Rs 649 monthly on the 5th "
+    assert sub("add", "Netflix", **NETFLIX) == ("Added netflix: ₹649 monthly on the 5th "
                                                 "(entertainment). Next: 5 Dec.")
     assert posts() == []                       # 5 Nov is before created_on
     assert run("2026-12-05") == 1
@@ -85,7 +85,7 @@ def test_weekly():
 # ---------------------------------------------------------------- add
 def test_add_on_the_due_day_posts_today():
     reply = sub("add", "spotify", amount_inr=119, day=19)
-    assert "Logged today's Rs 119." in reply and reply.endswith("Next: 19 Dec.")
+    assert "Logged today's ₹119." in reply and reply.endswith("Next: 19 Dec.")
     assert posts() == [("2026-11-19 09:00", 119.0)]
 
 
@@ -180,7 +180,7 @@ def test_pause_and_resume_do_not_back_fill():
 def test_resume_on_the_due_day_posts_it():
     sub("add", "netflix", **NETFLIX)
     sub("pause", "netflix", today="2026-11-20")
-    assert "Logged today's Rs 649." in sub("resume", "netflix", today="2026-12-05")
+    assert "Logged today's ₹649." in sub("resume", "netflix", today="2026-12-05")
     assert [p[0][:10] for p in posts()] == ["2026-12-05"]
 
 
@@ -221,10 +221,10 @@ def test_get_status_subscriptions():
     sub("add", "spotify", amount_inr=119, day=1)
     sub("pause", "spotify")
     text = core.get_status("subscriptions")
-    assert text.splitlines()[0] == "Fixed costs: Rs 3,374/month (3 active)."  # 649+125+2600
-    assert "- prime: Rs 1,500 yearly on 12 Mar, next 12 Mar (Rs 125/month)" in text
-    assert "- gym: Rs 600 weekly on Mon" in text
-    assert text.splitlines()[-1] == "- spotify: Rs 119 monthly on the 1st, paused"
+    assert text.splitlines()[0] == "Fixed costs: ₹3,374/month (3 active)."  # 649+125+2600
+    assert "- prime: ₹1,500 yearly on 12 Mar, next 12 Mar (₹125/month)" in text
+    assert "- gym: ₹600 weekly on Mon" in text
+    assert text.splitlines()[-1] == "- spotify: ₹119 monthly on the 1st, paused"
 
 
 def test_month_projection():
@@ -245,7 +245,7 @@ def test_chat_add_subscription_is_one_model_call(script):
                                            "amount_inr": 649, "category": "entertainment",
                                            "day": 5})])
     reply = turn("netflix 649 every month on the 5th")
-    assert reply.startswith("Added netflix: Rs 649 monthly on the 5th")
+    assert reply.startswith("Added netflix: ₹649 monthly on the 5th")
     assert len(log) == 1 and count_rows("recurring") == 1
 
 

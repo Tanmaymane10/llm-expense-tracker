@@ -53,7 +53,7 @@ def test_payment_options_come_from_the_db():
 def test_quick_add_saves_with_no_model_call(monkeypatch):
     _no_model(monkeypatch)
     reply = core.quick_add("Vada Pav", 20, "food", "upi", None, datetime.now())
-    assert reply.startswith("Saved:\n- vada pav: Rs 20 (food, ")
+    assert reply.startswith("Saved:\n- vada pav: ₹20 (food, ")
     assert query("SELECT item, amount_inr, payment_method, raw_text FROM expenses") == [
         ("vada pav", 20.0, "upi", "quick add")]
     assert query("SELECT purpose, status, total_tokens, attempts FROM llm_calls") == [
@@ -63,7 +63,7 @@ def test_quick_add_saves_with_no_model_call(monkeypatch):
 def test_quick_add_gives_the_same_budget_alert_as_add_expenses():
     core.set_budget("food", 100)
     reply = core.quick_add("thali", 90, "food")
-    assert "Food: 90% of Rs 100 used" in reply
+    assert "Food: 90% of ₹100 used" in reply
 
 
 def test_quick_add_saves_card_purchase():
@@ -92,7 +92,7 @@ def test_quick_add_is_not_counted_as_a_model_call():
 def test_quick_add_history_is_never_sent_to_the_model(script):
     log = script([("reply_to_user", {"message": "Hi!"})])
     history = [{"role": "user", "content": "Quick add: chai", "source": "quick_add"},
-               {"role": "assistant", "content": "Saved:\n- chai: Rs 15", "source": "quick_add"}]
+               {"role": "assistant", "content": "Saved:\n- chai: ₹15", "source": "quick_add"}]
     turn("hello", history)
     sent = [p.text for c in log[0] for p in c.parts]
     assert sent == ["hello"]
@@ -105,9 +105,9 @@ def test_panel_tap_save_with_no_model_call(monkeypatch):
     _no_model(monkeypatch)
     at = run_app()
     chips = _widget(at.button_group, "Quick add")
-    assert chips.options == ["chai · Rs 15", "+ Other"]
-    chips.set_value("chai · Rs 15").run()
-    _widget(at.number_input, "Amount (Rs)").set_value(18.0)
+    assert chips.options == ["chai · ₹15", "+ Other"]
+    chips.set_value("chai · ₹15").run()
+    _widget(at.number_input, "Amount (₹)").set_value(18.0)
     _widget(at.button, "Save chai").click().run()
     assert not at.exception
     assert query("SELECT item, amount_inr, category FROM expenses WHERE id = 2") == [
@@ -124,6 +124,6 @@ def test_panel_other_item_and_error(monkeypatch):
     _widget(at.button, "Save").click().run()  # empty item, zero amount
     assert at.error and count_rows() == 0
     _widget(at.text_input, "Item").set_value("bath towel")
-    _widget(at.number_input, "Amount (Rs)").set_value(504.0)
+    _widget(at.number_input, "Amount (₹)").set_value(504.0)
     _widget(at.button, "Save").click().run()
     assert query("SELECT item, category FROM expenses") == [("bath towel", "other")]

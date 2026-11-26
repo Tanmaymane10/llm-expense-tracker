@@ -19,7 +19,7 @@ def spend(amount, **extra):
 
 def test_add_income_saves_validated_row():
     reply = core.add_income("50000", "salary", "2026-11-01", "  Nov   pay ", "got salary 50000")
-    assert reply == "Saved income: salary Rs 50,000 on 1 Nov."
+    assert reply == "Saved income: salary ₹50,000 on 1 Nov."
     assert query("SELECT received_at, source, amount_inr, note, raw_text FROM income") == [
         ("2026-11-01 00:00", "salary", 50000.0, "Nov pay", "got salary 50000")]
 
@@ -43,15 +43,15 @@ def test_delete_income():
 # ---------------------------------------------------------------- savings status
 def test_savings_rate_is_na_without_income():
     spend(500)
-    assert core.get_status("savings") == (f"{TODAY:%B %Y}: income Rs 0, expenses Rs 500, "
-                                          "net Rs -500, savings rate n/a.")
+    assert core.get_status("savings") == (f"{TODAY:%B %Y}: income ₹0, expenses ₹500, "
+                                          "net -₹500, savings rate n/a.")
 
 
 def test_savings_rate_goes_negative_when_spending_exceeds_income():
     core.add_income(1000, "freelance")
     spend(1120)
     assert core.savings(MONTH)["rate"] == pytest.approx(-12)
-    assert core.get_status("savings").endswith("net Rs -120, savings rate -12%.")
+    assert core.get_status("savings").endswith("net -₹120, savings rate -12%.")
 
 
 def test_refunds_net_out_and_month_filter_applies():
@@ -60,8 +60,8 @@ def test_refunds_net_out_and_month_filter_applies():
     spend(500, is_refund=True)
     core.add_expenses([good_expense(spent_at="2020-01-05 10:00", amount_inr=999)], "test")
     assert core.savings(MONTH) == {"income": 10000, "expenses": 2500, "net": 7500, "rate": 75}
-    assert core.get_status("savings", "2020-01").startswith("January 2020: income Rs 0, "
-                                                            "expenses Rs 999")
+    assert core.get_status("savings", "2020-01").startswith("January 2020: income ₹0, "
+                                                            "expenses ₹999")
     with pytest.raises(ValueError):
         core.get_status("savings", "Nov 2026")
 
@@ -82,7 +82,7 @@ def test_savings_by_month():
 # ---------------------------------------------------------------- chat wiring
 def test_got_salary_saves_income_not_an_expense(script):
     log = script([("add_income", {"amount_inr": 50000, "source": "salary"})])
-    assert turn("got salary 50000").startswith("Saved income: salary Rs 50,000")
+    assert turn("got salary 50000").startswith("Saved income: salary ₹50,000")
     assert count_rows() == 0 and count_rows("income") == 1 and len(log) == 1
     assert query("SELECT raw_text FROM income") == [("got salary 50000",)]
 
