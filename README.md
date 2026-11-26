@@ -95,7 +95,8 @@ streamlit run app.py
 | Variable | Default | Meaning |
 |---|---|---|
 | `GEMINI_API_KEY` | none (required) | Your Gemini key |
-| `EXPENSE_MODEL` | `gemini-flash-latest` | Any Gemini model your key can use |
+| `EXPENSE_MODEL` | `gemini-3.5-flash-lite` | Any Gemini model your key can use |
+| `EXPENSE_FALLBACK_MODEL` | `gemini-flash-latest` | Backup model, tried only when the main one answers 503 on every retry or is out of daily quota; empty turns it off |
 | `EXPENSE_THINKING` | `low` | `low`, `off` or `default`; lower is faster |
 | `EXPENSE_DB` | `expenses.db` | Path of the SQLite file |
 | `EXPENSE_RATE_LIMIT` | `20` | Messages per user per 10 minutes |

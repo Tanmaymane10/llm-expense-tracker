@@ -29,6 +29,8 @@ load_dotenv()  # must run before the os.environ reads below
 DB_PATH = os.environ.get("EXPENSE_DB", "expenses.db")
 # Set EXPENSE_MODEL to any model your free key can use (see Google AI Studio).
 MODEL = os.environ.get("EXPENSE_MODEL", "gemini-3.5-flash-lite")
+# Tried only when MODEL answers 503 on every attempt or its daily quota is used up.
+FALLBACK_MODEL = os.environ.get("EXPENSE_FALLBACK_MODEL", "gemini-flash-latest")
 # "low" (default) / "off" / "default": how much the model "thinks" before answering.
 THINKING = os.environ.get("EXPENSE_THINKING", "low").lower()
 CATEGORIES = ["food", "transport", "groceries", "shopping", "bills",
@@ -1456,12 +1458,22 @@ _GEMINI_TOOLS = [types.Tool(function_declarations=[
     types.FunctionDeclaration(name=t["name"], description=t["description"],
                               parameters_json_schema=t["parameters"])
     for t in TOOLS])]
-_thinking_idx = 0  # index of the first thinking setting this model accepted
+_thinking_idx: dict = {}  # model -> index of the first thinking setting it accepted
 MAX_ATTEMPTS = 3      # model calls per request for 429/503; thinking fallbacks don't count
 RETRY_WAITS = (2, 4)  # seconds before attempt 2 and 3: worst case ~6 s, not ~45 s
+FALLBACK_ATTEMPTS, FALLBACK_WAITS = 2, (1,)
+THINKING_BUMPS = 2    # = len(_thinking_candidates()) - 1, once per model per process
+# Worst case for one chat message: MODEL needs all its attempts on every tool step and fails
+# on the last one, then FALLBACK_MODEL takes its attempts (once the backup has answered, the
+# turn's later steps go straight to it, and FALLBACK_ATTEMPTS <= MAX_ATTEMPTS). Plus each
+# model's thinking 400s. 5 * 3 + 2 + 2 * 2 = 21 calls; sleeps at most 5 * 6 + 1 = 31 s.
+MAX_CALLS_PER_MESSAGE = (MAX_TOOL_STEPS * MAX_ATTEMPTS + FALLBACK_ATTEMPTS
+                         + 2 * THINKING_BUMPS)
 # Optional callback(text) for progress, e.g. the Streamlit status box. A ContextVar, so each
 # Streamlit session thread has its own and no function signature changes.
 status_hook: ContextVar = ContextVar("status_hook", default=None)
+# True once the backup model answered in this chat turn; chat_turn resets it per message.
+_on_backup: ContextVar = ContextVar("_on_backup", default=False)
 
 
 def _thinking_candidates() -> list:
@@ -1476,12 +1488,12 @@ def _thinking_candidates() -> list:
 
 
 def _log_llm_call(purpose: str, status: str, started: float, attempts: int,
-                  resp=None, error: str = None):
-    """Record one model call (latency, tokens, outcome). Must never break the app."""
+                  resp=None, error: str = None, model: str = None):
+    """Record one model call (latency, tokens, outcome, model used). Never breaks the app."""
     usage = getattr(resp, "usage_metadata", None)
     tools = [c.name for c in (getattr(resp, "function_calls", None) or [])]
     row = (
-        datetime.now().isoformat(timespec="seconds"), MODEL, purpose, status,
+        datetime.now().isoformat(timespec="seconds"), model or MODEL, purpose, status,
         round((time.perf_counter() - started) * 1000), attempts,
         getattr(usage, "prompt_token_count", None) or 0,
         getattr(usage, "candidates_token_count", None) or 0,
@@ -1500,15 +1512,16 @@ def _log_llm_call(purpose: str, status: str, started: float, attempts: int,
         pass  # observability is best-effort
 
 
-def _generate(contents: list, now: datetime = None, purpose: str = "chat"):
-    """One model call. Mode ANY forces a tool call, so the model can never reply in free text.
-    Every call is recorded in the llm_calls table."""
-    global _thinking_idx
+def _call_model(model: str, contents: list, prompt: str, purpose: str, attempts: int,
+                waits: tuple):
+    """One request to `model`, retried on 429/503. Mode ANY forces a tool call, so the model
+    can never reply in free text. Logged in llm_calls. The final APIError carries
+    all_busy=True when every attempt got a 503."""
     candidates = _thinking_candidates()
-    prompt = system_prompt(now)  # once per call, not per retry (it reads the card list)
     started = time.perf_counter()
-    attempt = 1
-    while True:  # ends: attempt is capped, and _thinking_idx can only grow to len - 1
+    attempt, codes = 1, []
+    while True:  # ends: attempt is capped, and the thinking index can only grow to len - 1
+        idx = _thinking_idx.get(model, 0)
         config = types.GenerateContentConfig(
             system_instruction=prompt,
             tools=_GEMINI_TOOLS,
@@ -1516,38 +1529,67 @@ def _generate(contents: list, now: datetime = None, purpose: str = "chat"):
                 function_calling_config=types.FunctionCallingConfig(mode="ANY")),
             # We run the tools ourselves so we control the database writes.
             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
-            thinking_config=candidates[min(_thinking_idx, len(candidates) - 1)],
+            thinking_config=candidates[min(idx, len(candidates) - 1)],
         )
         try:
-            resp = client().models.generate_content(model=MODEL, contents=contents,
+            resp = client().models.generate_content(model=model, contents=contents,
                                                     config=config)
         except genai_errors.APIError as exc:
             code = getattr(exc, "code", None)
             # Model rejected this thinking setting -> try the next one.
-            if code == 400 and "think" in str(exc).lower() and _thinking_idx < len(candidates) - 1:
-                _thinking_idx += 1
+            if code == 400 and "think" in str(exc).lower() and idx < len(candidates) - 1:
+                _thinking_idx[model] = idx + 1
                 continue  # not a retry, so attempt is unchanged
             if code == 429 and "perday" in str(exc).lower():
-                _log_llm_call(purpose, "quota_daily", started, attempt, error="429 daily quota")
+                _log_llm_call(purpose, "quota_daily", started, attempt, error="429 daily quota",
+                              model=model)
                 raise DailyQuotaExceeded(
                     "Gemini free-tier DAILY quota used up for this model. It resets within a "
                     "day, or set EXPENSE_MODEL to a model with a higher daily limit.") from exc
-            if code in (429, 503) and attempt < MAX_ATTEMPTS:
-                wait = RETRY_WAITS[attempt - 1]
-                print(f"[llm] error {code}, retrying in {wait}s")
+            codes.append(code)
+            if code in (429, 503) and attempt < attempts:
+                wait = waits[attempt - 1]
+                print(f"[llm] {model} error {code}, retrying in {wait}s")
                 if hook := status_hook.get():
-                    hook(f"Gemini is busy, retrying ({attempt + 1}/{MAX_ATTEMPTS})...")
+                    hook(f"Gemini is busy, retrying ({attempt + 1}/{attempts})...")
                 time.sleep(wait)
                 attempt += 1
                 continue
-            _log_llm_call(purpose, "error", started, attempt, error=f"{type(exc).__name__} {code}")
+            _log_llm_call(purpose, "error", started, attempt,
+                          error=f"{type(exc).__name__} {code}", model=model)
+            exc.all_busy = all(c == 503 for c in codes)
             raise
         except Exception as exc:  # network errors etc.
-            _log_llm_call(purpose, "error", started, attempt, error=type(exc).__name__)
+            _log_llm_call(purpose, "error", started, attempt, error=type(exc).__name__,
+                          model=model)
             raise
-        _log_llm_call(purpose, "ok", started, attempt, resp=resp)
-        print(f"[llm] {MODEL} responded in {time.perf_counter() - started:.1f}s")
+        _log_llm_call(purpose, "ok", started, attempt, resp=resp, model=model)
+        print(f"[llm] {model} responded in {time.perf_counter() - started:.1f}s")
         return resp
+
+
+def _generate(contents: list, now: datetime = None, purpose: str = "chat"):
+    """One model turn on MODEL. FALLBACK_MODEL is tried only when MODEL answered 503 on every
+    attempt or is out of daily quota, and only for chat (eval always measures MODEL). Every
+    other error (400, per-minute 429, network) is raised as before."""
+    prompt = system_prompt(now)  # once per call, not per retry (it reads the card list)
+    backup_ok = purpose == "chat" and FALLBACK_MODEL and FALLBACK_MODEL != MODEL
+    if not (backup_ok and _on_backup.get()):
+        try:
+            return _call_model(MODEL, contents, prompt, purpose, MAX_ATTEMPTS, RETRY_WAITS)
+        except DailyQuotaExceeded:
+            if not backup_ok:
+                raise
+        except genai_errors.APIError as exc:
+            if not (backup_ok and getattr(exc, "all_busy", False)):
+                raise
+        print(f"[llm] {MODEL} unavailable, trying backup model {FALLBACK_MODEL}")
+        if hook := status_hook.get():
+            hook(f"Gemini is busy, trying the backup model ({FALLBACK_MODEL})...")
+    resp = _call_model(FALLBACK_MODEL, contents, prompt, purpose, FALLBACK_ATTEMPTS,
+                       FALLBACK_WAITS)
+    _on_backup.set(True)  # the rest of this turn skips the failing main model
+    return resp
 
 
 # Their results are shown to the user as-is, so these need only ONE model call.
@@ -1622,7 +1664,7 @@ def _local_turn(history: list, user_text: str) -> str | None:
         reply = add_expenses(rows, user_text)  # same validation as the model's tool call
     except Exception:  # add_expenses validates before inserting, so nothing was saved
         return None
-    _log_llm_call("local", "ok", started, 0)  # 0 tokens; kept out of the usage metrics
+    _log_llm_call("local", "ok", started, 0, model="none")  # 0 tokens; not in usage metrics
     return "\n\n".join([reply, *due_notes()])
 
 
@@ -1670,7 +1712,7 @@ def quick_add(item, amount_inr, category, payment_method=None, card_name=None,
     reply = add_expenses([{"spent_at": when, "item": item, "amount_inr": amount_inr,
                            "category": category, "payment_method": payment_method,
                            "card_name": card_name}], "quick add")
-    _log_llm_call("quick_add", "ok", started, 0)  # 0 tokens; kept out of the usage metrics
+    _log_llm_call("quick_add", "ok", started, 0, model="none")  # 0 tokens; not in metrics
     return "\n\n".join([reply, *due_notes()])
 
 
@@ -1678,6 +1720,7 @@ def chat_turn(history: list, user_text: str, user_key: str = "default") -> str:
     """One user message -> assistant reply. Applies all guardrails."""
     # quick-add pairs are shown in the chat but are not part of the conversation with the model
     history = [m for m in history if m.get("source") != "quick_add"]
+    _on_backup.set(False)  # every message starts on the main model
     user_text = (user_text or "").strip()
     if not user_text:
         return 'Type an expense, for example "chai 15".'

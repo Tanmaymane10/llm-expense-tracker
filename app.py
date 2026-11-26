@@ -869,6 +869,11 @@ def render_llm_usage():
     c5.metric("Success rate", f"{s['success_rate']:.0f}%")
     st.caption(f"Saved without a model call today: {read('local_saves')} message(s). "
                "These are not counted above.")
+    backup = (int((df["model"] == core.FALLBACK_MODEL).sum())
+              if core.FALLBACK_MODEL and core.FALLBACK_MODEL != core.MODEL else 0)
+    st.metric("Backup model calls", backup,
+              help=f"Calls answered or tried by {core.FALLBACK_MODEL or 'no backup model'} "
+                   f"after {core.MODEL} was busy or out of daily quota.")
 
     daily = an.llm_daily(df)
     left, right = st.columns(2)

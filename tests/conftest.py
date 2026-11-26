@@ -15,6 +15,8 @@ def fresh_state(tmp_path, monkeypatch):
     monkeypatch.setattr(core, "DB_PATH", str(tmp_path / "test.db"))
     monkeypatch.setattr(core, "RATE_LIMIT_MESSAGES", 5)
     core._hits.clear()
+    monkeypatch.setattr(core, "_thinking_idx", {})  # per-process memory of thinking configs
+    core._on_backup.set(False)
     core.init_db()
     st.cache_data.clear()  # the app caches reads per process; start each test cold
 

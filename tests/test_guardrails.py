@@ -128,6 +128,7 @@ def test_tool_loop_is_capped(script):
 
 
 def test_daily_quota_error_fails_fast_and_gives_friendly_reply(monkeypatch):
+    monkeypatch.setattr(core, "FALLBACK_MODEL", "")  # backup off; see test_backup_model.py
     calls = []
 
     def raiser(**kwargs):

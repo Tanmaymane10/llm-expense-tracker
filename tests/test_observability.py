@@ -104,7 +104,7 @@ def _flaky(monkeypatch, errors):
         return FakeResp([("out_of_scope", {})])
     monkeypatch.setattr(core, "_client", fake_client(call))
     monkeypatch.setattr(core.time, "sleep", sleeps.append)
-    monkeypatch.setattr(core, "_thinking_idx", 0)
+    monkeypatch.setattr(core, "FALLBACK_MODEL", "")  # these tests cover the main model only
     token = core.status_hook.set(notes.append)
     return sleeps, notes, token
 
@@ -142,7 +142,7 @@ def test_thinking_fallback_does_not_use_up_a_retry(monkeypatch):
         core._generate([])
     finally:
         core.status_hook.reset(token)
-    assert core._thinking_idx == 2 and sleeps == [2, 4]  # both bumps, then the full 3 attempts
+    assert core._thinking_idx[core.MODEL] == 2 and sleeps == [2, 4]  # 2 bumps, then 3 tries
     assert query("SELECT status, attempts FROM llm_calls") == [("ok", 3)]
 
 
@@ -154,4 +154,5 @@ def test_thinking_fallback_is_bounded_by_the_configs(monkeypatch):
             core._generate([])
     finally:
         core.status_hook.reset(token)
-    assert core._thinking_idx == len(core._thinking_candidates()) - 1 and sleeps == []
+    assert core._thinking_idx[core.MODEL] == len(core._thinking_candidates()) - 1
+    assert sleeps == []
