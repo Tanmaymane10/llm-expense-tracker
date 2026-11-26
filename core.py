@@ -469,6 +469,12 @@ def _resolve_card(conn, card_name, payment_method):
     return payment_method, card[0], card[1]
 
 
+# When set to a list, add_expenses appends the ids it inserted (the app's Undo). A ContextVar,
+# so each Streamlit session thread has its own and callers that don't set it are unaffected.
+saved_ids: ContextVar = ContextVar("saved_ids", default=None)
+UNDO_COLUMNS = ("spent_at", "item", "amount_inr", "category", "payment_method", "card_id")
+
+
 def add_expenses(expenses: list, raw_text: str) -> str:
     if not expenses or len(expenses) > 20:
         raise ValueError("Provide between 1 and 20 expenses.")
@@ -505,24 +511,35 @@ def add_expenses(expenses: list, raw_text: str) -> str:
                 )
             )
 
-        conn.executemany(
-            """
-            INSERT INTO expenses (
-                spent_at,
-                item,
-                amount_inr,
-                category,
-                raw_text,
-                payment_method,
-                card_id
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            rows,
-        )
+        ids = [conn.execute("INSERT INTO expenses (spent_at, item, amount_inr, category, "
+                            "raw_text, payment_method, card_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                            row).lastrowid for row in rows]
         alerts = budget_alerts(conn, rows)
+    if (sink := saved_ids.get()) is not None:  # after the commit, so only saved ids
+        sink.extend(ids)
 
     return "Saved:\n" + "\n".join(lines) + ("\n\n" + "\n".join(alerts) if alerts else "")
+
+
+def expense_snapshot(ids: list) -> list:
+    """(id, *UNDO_COLUMNS) rows, taken right after a save so Undo can spot later edits."""
+    with get_conn() as conn:
+        return conn.execute(f"SELECT id, {', '.join(UNDO_COLUMNS)} FROM expenses WHERE id IN "
+                            f"({', '.join('?' * len(ids))}) ORDER BY id", ids).fetchall()
+
+
+def undo_expenses(snapshot: list) -> tuple:
+    """Delete exactly the snapshot's rows, but only those unchanged since it was taken.
+    Returns counts (deleted, edited and kept, already gone)."""
+    deleted = edited = 0
+    where = " AND ".join(f"{c} IS ?" for c in UNDO_COLUMNS)  # fixed column names
+    with get_conn() as conn:
+        for row in snapshot:
+            if conn.execute(f"DELETE FROM expenses WHERE id = ? AND {where}", row).rowcount:
+                deleted += 1
+            elif conn.execute("SELECT 1 FROM expenses WHERE id = ?", (row[0],)).fetchone():
+                edited += 1
+    return deleted, edited, len(snapshot) - deleted - edited
 
 
 # ---------------------------------------------------------------- budgets

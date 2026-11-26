@@ -1,5 +1,7 @@
 """Streamlit dashboard.  Run with:  streamlit run app.py"""
+import time
 import uuid
+from contextlib import contextmanager
 from datetime import date, datetime, timedelta
 
 import altair as alt
@@ -482,6 +484,44 @@ def render_plan():
             st.rerun()
 
 
+UNDO_SECONDS = 120
+
+
+@contextmanager
+def _undoable():
+    """Collect the ids a save creates so Undo can remove exactly those. Ends any older Undo."""
+    st.session_state.pop("undo", None)
+    ids = []
+    token = core.saved_ids.set(ids)
+    try:
+        yield
+    finally:
+        core.saved_ids.reset(token)
+        if ids:
+            st.session_state.undo = {"rows": core.expense_snapshot(ids), "at": time.time()}
+
+
+def render_undo():
+    undo = st.session_state.get("undo")
+    if not undo:
+        return
+    if time.time() - undo["at"] > UNDO_SECONDS:
+        del st.session_state.undo
+        if st.session_state.get("undo_btn"):  # clicked after the time ran out
+            st.warning("Too late to undo; the entries are kept.")
+        return
+    n = len(undo["rows"])
+    if st.button(f"Undo ({n} {'entry' if n == 1 else 'entries'})", key="undo_btn"):
+        del st.session_state.undo
+        deleted, edited, gone = core.undo_expenses(undo["rows"])
+        notes = [f"Removed {deleted} {'entry' if deleted == 1 else 'entries'}."]
+        if edited:
+            notes.append(f"{edited} edited after saving, so kept.")
+        if gone:
+            notes.append(f"{gone} already deleted.")
+        _after_write(" ".join(notes))
+
+
 def render_quick_add():
     """Chips for the most frequent items; one tap opens a prefilled form. No model call."""
     items, opts = read("quick_items"), read("payment_options")
@@ -504,8 +544,10 @@ def render_quick_add():
         if st.form_submit_button(f"Save {item}" if cur else "Save"):
             payment_method, card_name = opts.get(method, (None, None))
             try:
-                reply = core.quick_add(item, amount, category, payment_method, card_name,
-                                       datetime.combine(date.today(), at) if at else None)
+                with _undoable():
+                        reply = core.quick_add(item, amount, category, payment_method,
+                                           card_name,
+                                           datetime.combine(date.today(), at) if at else None)
             except ValueError as e:
                 st.error(str(e))
                 return
@@ -534,7 +576,9 @@ def render_chat():
             with slot.status("Working on it...") as box:
                 token = core.status_hook.set(lambda text: box.update(label=text))
                 try:
-                    reply = chat_turn(st.session_state.history, prompt, st.session_state.sid)
+                    with _undoable():
+                        reply = chat_turn(st.session_state.history, prompt,
+                                          st.session_state.sid)
                 except Exception:  # model or network failure: show a clean message, not a trace
                     reply = "The AI service is unavailable right now. Please try again shortly."
                 finally:
@@ -545,6 +589,7 @@ def render_chat():
                 {"role": "assistant", "content": reply},
             ]
             st.cache_data.clear()  # any turn may have written (expenses, budgets, cards...)
+        render_undo()
 
         # Newest exchange first, so the latest reply sits right under the input box.
         history = st.session_state.history
