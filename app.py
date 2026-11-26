@@ -62,7 +62,8 @@ THEME_CSS = """
 /* one centered column, also on desktop; room at the bottom for the fixed nav */
 [data-testid="stMainBlockContainer"] {
   max-width: 560px;
-  padding: 22px 20px 132px;
+  /* nav 72px + 16px offset + 24px, plus the phone's home-indicator inset */
+  padding: 22px 20px calc(132px + env(safe-area-inset-bottom));
 }
 [data-testid="stMetricValue"], .num { font-variant-numeric: tabular-nums; }
 h1 {
@@ -160,21 +161,26 @@ hr { border-color: var(--border); }
 .st-key-bottomnav {
   position: fixed;
   left: 50%;
-  bottom: 16px;
+  bottom: calc(16px + env(safe-area-inset-bottom));
   transform: translateX(-50%);
   width: min(536px, calc(100% - 24px));
   height: 72px;
-  z-index: 999990;
-  background: rgba(21, 26, 33, 0.94);
+  z-index: 999990;  /* above all page content; this stHorizontalBlock is what paints */
+  background: #151A21;
   border: 1px solid #262D37;
   border-radius: 24px;
   padding: 0 4px;
+  gap: 0 !important;
   flex-wrap: nowrap !important;
 }
+/* five equal slots, so the middle "+" sits at the bar's center */
+.st-key-bottomnav > div { flex: 1 1 0 !important; min-width: 0; width: auto !important; }
+.st-key-bottomnav .stButton { display: flex; justify-content: center; width: 100%; }
 .st-key-bottomnav button {
   flex-direction: column;
   gap: 3px;
-  min-width: 52px;
+  min-width: 0;
+  max-width: 100%;
   min-height: 56px;
   padding: 4px 6px !important;
   border: 0 !important;
