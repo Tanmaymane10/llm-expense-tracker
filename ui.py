@@ -241,8 +241,8 @@ def card_row(c: dict) -> str:
 def non_card_row(amount: float) -> str:
     return ('<div style="display:flex;justify-content:space-between;align-items:center;'
             'background:#151A21;border:1px solid #232A33;border-radius:18px;'
-            f'padding:12px 14px;font-size:14px;{FONT}"><span style="color:{MUTED}">UPI &amp; '
-            'cash this month</span><span class="num" style="font-weight:600">'
+            f'padding:12px 14px;font-size:14px;{FONT}"><span style="color:{MUTED}">Non-card '
+            'spending this month</span><span class="num" style="font-weight:600">'
             f'{money(amount)}</span></div>')
 
 

@@ -68,7 +68,7 @@ def test_month_figures():
     add("insurance", 50, d2d=0)
     add("old", 999, day="2026-10-31")
     f = core.month_figures(TODAY)
-    assert f["d2d"] == 110 and f["today"] == 40 and f["upi_cash"] == 140
+    assert f["d2d"] == 110 and f["today"] == 40 and f["non_card"] == 110  # refund: NULL method
     assert f["groups"] == {"day-to-day": 110, "fixed": 9050, "family": 10000, "invested": 8400}
     assert f["total_out"] == 110 + 9050 + 10000 + 8400
     assert f["status"] == "on track" and f["left"] == 7000 - 110
@@ -86,6 +86,17 @@ def test_settings_round_trip_and_validation():
     assert core.get_d2d_limits() == (6000, 8000)
     add("chai", 6500)
     assert core.month_figures(TODAY)["status"] == "near limit"
+
+
+def test_non_card_spending_counts_every_day_to_day_method_but_credit_cards():
+    for i, method in enumerate(["upi", "CASH", "debit_card", "Bank_Transfer", None]):
+        add(f"d2d {i}", 10 ** i, method=method)  # 1 + 10 + 100 + 1000 + 10000
+    add("card", 7, method="credit_card")
+    add("card caps", 70, method="CREDIT_CARD")
+    add("parents", 500, "family", method="upi")
+    add("sip", 600, "investment", method="bank_transfer")
+    add("rent", 700, "bills", method="upi")
+    assert core.month_figures(TODAY)["non_card"] == 11111
 
 
 def test_card_cycle_sums_across_the_statement_day(monkeypatch):

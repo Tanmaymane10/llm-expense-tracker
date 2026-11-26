@@ -678,17 +678,18 @@ def month_figures(today: date = None) -> dict:
         rows = conn.execute(
             f"SELECT {GROUP_SQL} AS grp, SUM(amount_inr), "
             "SUM(CASE WHEN substr(spent_at, 1, 10) = :d THEN amount_inr ELSE 0 END), "
-            "SUM(CASE WHEN payment_method IN ('upi', 'cash') THEN amount_inr ELSE 0 END) "
+            "SUM(CASE WHEN LOWER(COALESCE(payment_method, '')) <> 'credit_card' "
+            "THEN amount_inr ELSE 0 END) "
             "FROM expenses WHERE substr(spent_at, 1, 7) = :m GROUP BY grp",
             {"d": today.isoformat(), "m": today.strftime("%Y-%m")}).fetchall()
-    by = {g: (total, day, upi) for g, total, day, upi in rows}
-    so_far, spent_today, upi_cash = by.get("day-to-day", (0.0, 0.0, 0.0))
+    by = {g: (total, day, nc) for g, total, day, nc in rows}
+    so_far, spent_today, non_card = by.get("day-to-day", (0.0, 0.0, 0.0))
     target, limit = get_d2d_limits()
     groups = {g: by.get(g, (0.0,))[0] for g in GROUPS}
     return {"d2d": so_far, "today": spent_today, "pace": month_pace(so_far, today),
             "left": limit - so_far, "status": d2d_status(so_far, target, limit),
             "target": target, "limit": limit, "groups": groups,
-            "total_out": sum(groups.values()), "upi_cash": upi_cash,  # day-to-day rows only
+            "total_out": sum(groups.values()), "non_card": non_card,  # day-to-day rows only
             "near": [b for b in budget_status(today)
                      if b["category"] != "overall" and b["pct"] >= 80]}
 

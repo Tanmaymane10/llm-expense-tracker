@@ -752,7 +752,7 @@ def render_home():
                 if not ui.has_dates(card):  # sits in the row's due slot (CSS)
                     st.button("Set billing dates in Plan", key=f"carddates_{card['id']}",
                               type="tertiary", on_click=_go, args=("Plan",))
-        st.html(ui.non_card_row(fig["upi_cash"]))
+        st.html(ui.non_card_row(fig["non_card"]))
     for card in cards:
         if line := due_line(card, today):
             st.warning(line)
