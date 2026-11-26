@@ -1,6 +1,6 @@
 """Streamlit dashboard.  Run with:  streamlit run app.py"""
 import uuid
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 import altair as alt
 import pandas as pd
@@ -274,7 +274,8 @@ _READS = {
     "budget_progress": an.budget_progress, "budget_status": budget_status,
     "card_status": card_status, "subscription_status": subscription_status,
     "savings": savings, "list_cards": list_cards, "recent": _recent_rows,
-    "local_saves": an.local_saves,
+    "local_saves": an.local_saves, "quick_items": core.quick_items,
+    "payment_options": core.payment_options,
 }
 
 
@@ -481,12 +482,47 @@ def render_plan():
             st.rerun()
 
 
+def render_quick_add():
+    """Chips for the most frequent items; one tap opens a prefilled form. No model call."""
+    items, opts = read("quick_items"), read("payment_options")
+    labels = [f"{r['item']} · {core._rs(r['amount_inr'])}" for r in items] + ["+ Other"]
+    v = st.session_state.get("qa_v", 0)  # bumped after a save, which resets the chips
+    pick = st.pills("Quick add", labels, key=f"qa_pick_{v}")
+    if pick is None:
+        return
+    cur = None if pick == "+ Other" else items[labels.index(pick)]
+    with st.form(f"qa_form_{v}"):
+        item = cur["item"] if cur else st.text_input("Item", max_chars=80)
+        c1, c2 = st.columns(2)
+        amount = c1.number_input("Amount (Rs)", 0.0, float(MAX_AMOUNT_INR), step=10.0,
+                                 value=float(cur["amount_inr"]) if cur else 0.0)
+        category = c2.selectbox("Category", CATEGORIES,
+                                index=CATEGORIES.index(cur["category"] if cur else "other"))
+        last = cur and core.payment_label(cur["payment_method"], cur["card_name"])
+        method = st.pills("Paid with", list(opts), default=last if last in opts else None)
+        at = st.time_input("Time today (leave empty for now)", value=None)
+        if st.form_submit_button(f"Save {item}" if cur else "Save"):
+            payment_method, card_name = opts.get(method, (None, None))
+            try:
+                reply = core.quick_add(item, amount, category, payment_method, card_name,
+                                       datetime.combine(date.today(), at) if at else None)
+            except ValueError as e:
+                st.error(str(e))
+                return
+            st.session_state.history += [  # tagged: shown in the chat, never sent to the model
+                {"role": "user", "content": f"Quick add: {item}", "source": "quick_add"},
+                {"role": "assistant", "content": reply, "source": "quick_add"}]
+            st.session_state.qa_v = v + 1
+            _after_write("Saved")
+
+
 def render_chat():
     if "history" not in st.session_state:
         st.session_state.history = []  # plain-text turns only
     if "sid" not in st.session_state:
         st.session_state.sid = uuid.uuid4().hex  # key for the per-user rate limit
 
+    render_quick_add()
     chat_col, data_col = st.columns(2)
 
     with chat_col:

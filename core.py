@@ -1566,8 +1566,58 @@ def _local_turn(history: list, user_text: str) -> str | None:
     return "\n\n".join([reply, *due_notes()])
 
 
+# ---------------------------------------------------------------- quick add (no model call)
+def payment_label(payment_method, card_name):
+    """Display label of a stored method: the card name, else e.g. 'debit card', else None."""
+    return card_name or (payment_method.replace("_", " ") if payment_method else None)
+
+
+def payment_options() -> dict:
+    """{label: (payment_method, card_name)} from the DB: registered cards, then the non-card
+    methods already used in expenses."""
+    with get_conn() as conn:
+        cards = [r[0] for r in conn.execute("SELECT card_name FROM credit_cards ORDER BY id")]
+        methods = [r[0] for r in conn.execute(
+            "SELECT DISTINCT payment_method FROM expenses WHERE payment_method IS NOT NULL "
+            "AND card_id IS NULL ORDER BY payment_method")]
+    opts = {c: ("credit_card", c) for c in cards}
+    for m in methods:
+        opts.setdefault(payment_label(m, None), (m, None))
+    return opts
+
+
+def quick_items(days: int = 90, n: int = 8, today: date = None) -> list:
+    """Most frequent items of the last `days` days (refunds and auto-posted rows left out),
+    each with the amount, category, method and card of its latest entry."""
+    since = ((today or date.today()) - timedelta(days=days - 1)).isoformat()
+    with get_conn() as conn:
+        conn.row_factory = sqlite3.Row
+        return [dict(r) for r in conn.execute(
+            "SELECT item, amount_inr, category, payment_method, card_name, n FROM ("
+            "  SELECT e.item, e.amount_inr, e.category, e.payment_method, c.card_name,"
+            "    COUNT(*) OVER (PARTITION BY e.item) AS n,"
+            "    ROW_NUMBER() OVER (PARTITION BY e.item ORDER BY e.id DESC) AS rn"
+            "  FROM expenses e LEFT JOIN credit_cards c ON c.id = e.card_id"
+            "  WHERE e.amount_inr > 0 AND e.recurring_id IS NULL AND date(e.spent_at) >= ?)"
+            " WHERE rn = 1 ORDER BY n DESC, item LIMIT ?", (since, n))]
+
+
+def quick_add(item, amount_inr, category, payment_method=None, card_name=None,
+              when: datetime = None) -> str:
+    """One expense from the quick-add panel: add_expenses validation, alerts and reply."""
+    started = time.perf_counter()
+    when = (when or datetime.now()).strftime("%Y-%m-%d %H:%M")
+    reply = add_expenses([{"spent_at": when, "item": item, "amount_inr": amount_inr,
+                           "category": category, "payment_method": payment_method,
+                           "card_name": card_name}], "quick add")
+    _log_llm_call("quick_add", "ok", started, 0)  # 0 tokens; kept out of the usage metrics
+    return "\n\n".join([reply, *due_notes()])
+
+
 def chat_turn(history: list, user_text: str, user_key: str = "default") -> str:
     """One user message -> assistant reply. Applies all guardrails."""
+    # quick-add pairs are shown in the chat but are not part of the conversation with the model
+    history = [m for m in history if m.get("source") != "quick_add"]
     user_text = (user_text or "").strip()
     if not user_text:
         return 'Type an expense, for example "chai 15".'
