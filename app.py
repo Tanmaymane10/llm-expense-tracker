@@ -122,6 +122,7 @@ a { color: var(--accent); }
 }
 .st-key-tiles > div { flex: 1 1 0; min-width: 0; }
 .st-key-tiles [data-testid="stMetricValue"] { font-size: 18px; }
+.st-key-usage_tiles > div { flex: 1 1 140px; min-width: 0; }
 /* buttons: secondary = surface pill, primary = lime */
 .stButton > button, .stDownloadButton > button, .stFormSubmitButton > button {
   min-height: 44px;
@@ -362,6 +363,7 @@ _READS = {
     "savings": savings, "list_cards": list_cards, "recent": _recent_rows,
     "local_saves": an.local_saves, "quick_items": core.quick_items,
     "payment_options": core.payment_options, "month_figures": core.month_figures,
+    "d2d_limits": core.get_d2d_limits,
 }
 
 
@@ -389,7 +391,7 @@ def _after_write(msg: str):
 def render_subscriptions():
     st.subheader("Subscriptions")
     st.caption("Each payment is logged automatically on its due date. You can also say "
-               "\"netflix 649 every month on the 5th\" in Chat.")
+               "\"netflix 649 every month on the 5th\" on Home.")
     today = date.today()
     subs = read("subscription_status", today)
     if subs:
@@ -460,16 +462,38 @@ def render_subscriptions():
             st.rerun()
 
 
+def render_d2d_settings():
+    st.subheader("Day-to-day target & limit")
+    st.caption("Changing these also applies to past months.")
+    target, limit = read("d2d_limits")
+    with st.form("d2d_form"):
+        with st.container(horizontal=True):
+            new_target = st.number_input("Target (₹)", 1.0, float(MAX_AMOUNT_INR), target,
+                                         step=500.0, format="%.0f")
+            new_limit = st.number_input("Limit (₹)", 1.0, float(MAX_AMOUNT_INR), limit,
+                                        step=500.0, format="%.0f")
+        if st.form_submit_button("Save target and limit"):
+            try:
+                _after_write(core.set_d2d_limits(new_target, new_limit))
+            except ValueError as e:
+                st.error(str(e))
+
+
 def render_plan():
+    st.title("Plan")
+    render_d2d_settings()
     st.subheader("Monthly budgets")
-    st.caption("Leave a row at 0 for no budget. You can also say \"food budget 6000\" in Chat.")
+    st.caption("Leave a row at 0 for no budget. The Total out budget covers everything, "
+               "investments included. You can also say \"food budget 6000\" on Home.")
     current = {r["category"]: r["budget"] for r in read("budget_status")}
     table = pd.DataFrame({"category": CATEGORIES + ["overall"]})
+    table["label"] = table["category"].map(core.budget_label)
     table["budget"] = table["category"].map(current).fillna(0.0)
     edited = st.data_editor(
         table, hide_index=True, width="stretch", key="budgets_editor",
+        column_order=["label", "budget"],
         column_config={
-            "category": st.column_config.TextColumn("Category", disabled=True),
+            "label": st.column_config.TextColumn("Category", disabled=True),
             "budget": st.column_config.NumberColumn("Monthly budget (₹)", min_value=0,
                                                     max_value=MAX_AMOUNT_INR, step=500,
                                                     format="%.0f"),
@@ -955,7 +979,7 @@ def render_analytics():
         c3.metric("Savings rate", "n/a" if s["rate"] is None else f"{s['rate']:.0f}%")
         income = read("income")
         if income.empty:
-            st.caption("No income yet. Add it in the Plan tab or say \"got salary 50000\" in Chat.")
+            st.caption("No income yet. Add it in Plan or say \"got salary 50000\" on Home.")
         else:
             monthly = an.savings_by_month(df_all, income).tail(12)
             st.altair_chart(glass_line_chart(monthly, "%b %Y"), width="stretch", theme=None)
@@ -1029,7 +1053,7 @@ def render_analytics():
         cards = pd.DataFrame(read("card_status"))
         cards = cards[cards["statement_day"].notna()] if not cards.empty else cards
         if cards.empty:
-            st.caption("Set a card's statement day in the Plan tab to see its cycle.")
+            st.caption("Set a card's statement day in Plan to see its cycle.")
         else:
             st.dataframe(
                 _money(cards[["card", "amount_due", "due_date", "paid", "spent_cycle",
@@ -1051,19 +1075,20 @@ def render_analytics():
 
 
 def render_llm_usage():
+    st.title("Usage")
     include_eval = st.checkbox("Include evaluation runs", value=False)
     df = read("llm_calls", include_eval)
     if df.empty:
-        st.info("No model calls recorded yet. Send a message in the Chat tab.")
+        st.info("No model calls recorded yet. Send a message on Home.")
         return
 
     s = an.llm_summary(df)
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Calls today", s["calls_today"])
-    c2.metric("Tokens today", f"{s['tokens_today']:,}")
-    c3.metric("Median latency", f"{s['p50_ms'] / 1000:.1f} s")
-    c4.metric("95th percentile", f"{s['p95_ms'] / 1000:.1f} s")
-    c5.metric("Success rate", f"{s['success_rate']:.0f}%")
+    with st.container(horizontal=True, key="usage_tiles"):  # wraps two per row on a phone
+        st.metric("Calls today", s["calls_today"])
+        st.metric("Tokens today", f"{s['tokens_today']:,}")
+        st.metric("Median latency", f"{s['p50_ms'] / 1000:.1f} s")
+        st.metric("95th percentile", f"{s['p95_ms'] / 1000:.1f} s")
+        st.metric("Success rate", f"{s['success_rate']:.0f}%")
     st.caption(f"Saved without a model call today: {read('local_saves')} message(s). "
                "These are not counted above.")
     backup = (int((df["model"] == core.FALLBACK_MODEL).sum())

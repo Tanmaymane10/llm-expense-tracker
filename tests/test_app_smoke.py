@@ -245,3 +245,18 @@ def test_lock_button_relocks(monkeypatch):
     at = run_app()
     at.button(key="lock").click().run()
     assert not nav_keys(at) and at.text_input[0].label == "Enter your 6-digit PIN"
+
+
+def test_plan_saves_day_to_day_target_and_limit():
+    import core
+    at = run_app("Plan")
+    assert any("applies to past months" in c.value for c in at.caption)
+    _widget(at.number_input, "Target (₹)").set_value(7000.0)
+    _widget(at.button, "Save target and limit").click().run()  # target must be below limit
+    assert at.error and core.get_d2d_limits() == (5000, 7000)
+    _widget(at.number_input, "Target (₹)").set_value(6000.0)
+    _widget(at.number_input, "Limit (₹)").set_value(9000.0)
+    _widget(at.button, "Save target and limit").click().run()
+    assert core.get_d2d_limits() == (6000, 9000) and not at.exception
+    labels = at.dataframe[0].value["label"].tolist()
+    assert labels[-1] == "Total out budget" and "Investment" in labels

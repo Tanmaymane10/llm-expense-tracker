@@ -5,6 +5,8 @@ import time
 
 import streamlit as st
 
+import ui
+
 MAX_FAILS = 5
 LOCK_SECONDS = 15 * 60
 
@@ -20,7 +22,7 @@ def require_pin() -> None:
         return
 
     expected = os.environ.get("APP_PIN", "")
-    st.title("QORVIAN")
+    st.html(ui.brand())  # static: no data in it
     if not (expected.isdigit() and len(expected) == 6):  # fail closed
         st.error("The server PIN is not configured.")
         st.stop()
@@ -34,7 +36,7 @@ def require_pin() -> None:
 
     with st.form("pin_form"):
         pin = st.text_input("Enter your 6-digit PIN", type="password", max_chars=6)
-        submitted = st.form_submit_button("Unlock")
+        submitted = st.form_submit_button("Unlock", type="primary", width="stretch")
 
     if submitted:
         if hmac.compare_digest(pin.encode(), expected.encode()):
