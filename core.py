@@ -1485,6 +1485,77 @@ LOCAL_REPLY_TOOLS = {"add_expenses", "set_budget", "add_income", "get_status",
                      "manage_subscription"}
 
 
+# ---------------------------------------------------------------- local fast path
+# Plain "item amount" lists ("chai 15", "metro 40, auto 120", "vada pav 30 and chai 15") are
+# saved without a model call. Every rule errs towards the model: a wrong local save is worse
+# than a model call.
+_LOCAL_SPLIT = re.compile(r",\s+|,(?=[a-z])|\s+and\s+")
+_LOCAL_PAIR = re.compile(
+    r"(?P<item>[a-z][a-z&'\-]*(?: [a-z&'\-]+)*) "
+    r"(?P<amount>\d{1,3}(?:,\d{2})*,\d{3}|\d+(?:\.\d+)?k|\d+)")  # 1,299 / 1,00,000 / 2.5k / 15
+_LOCAL_BLOCK = set("""
+    yesterday today tomorrow tonight last night morning evening afternoon noon week month year
+    ago day days daily weekly monthly yearly every am pm kal aaj parso raat subah shaam
+    change changed update edit delete remove removed undo wrong fix correct cancel pause resume
+    paid pay spent spend bought buy got get received receive credited debited sent gave cost
+    salary refund refunded cashback budget back free nothing owe owed lent borrowed income
+    for on at my me i we our the a an to from via using with by of in was is
+    how much many what which when where why who did do does show list total left
+    upi cash card credit debit netbanking gpay paytm phonepe
+    ka ke ki ko se pe par me mein ne hai tha thi diye diya kiye kiya lage laga liya liye
+    rupaye rupees rupee rs inr bucks
+""".split())
+
+
+def _parse_local(text: str, cards: list) -> list | None:
+    """[(item, amount)] if the whole message is 'item amount' pairs, else None. Pure."""
+    text = " ".join(str(text).lower().split())
+    card_words = {w for c in cards for w in c.lower().split()}
+    pairs = []
+    for piece in _LOCAL_SPLIT.split(text):
+        m = _LOCAL_PAIR.fullmatch(piece)
+        if not m:
+            return None
+        words = set(m["item"].split())
+        if words & _LOCAL_BLOCK or words & card_words:
+            return None
+        raw = m["amount"].replace(",", "")
+        amount = float(raw[:-1]) * 1000 if raw.endswith("k") else float(raw)
+        pairs.append((m["item"], amount))
+    return pairs or None
+
+
+def _local_turn(history: list, user_text: str) -> str | None:
+    """Save a plain 'item amount' message with no model call, or None to use the model.
+    The category is the one last saved for the same item; an unknown item -> model."""
+    # shortcut: items are saved as typed, so a typo the model once stored verbatim ("petorl")
+    # repeats here instead of being corrected; add a typo check if the replay shows mismatches.
+    if history and history[-1]["role"] == "assistant" and \
+            history[-1]["content"].rstrip().endswith("?"):
+        return None  # the model asked something; this message may be the answer
+    started = time.perf_counter()
+    pairs = _parse_local(user_text, list_cards())
+    if not pairs:
+        return None
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    try:
+        rows = []
+        with get_conn() as conn:
+            for item, amount in pairs:
+                hit = conn.execute("SELECT category FROM expenses WHERE LOWER(item) = ? AND "
+                                   "amount_inr > 0 ORDER BY id DESC LIMIT 1",
+                                   (_check_item(item),)).fetchone()
+                if hit is None:
+                    return None
+                rows.append({"spent_at": now, "item": item, "amount_inr": amount,
+                             "category": hit[0]})
+        reply = add_expenses(rows, user_text)  # same validation as the model's tool call
+    except Exception:  # add_expenses validates before inserting, so nothing was saved
+        return None
+    _log_llm_call("local", "ok", started, 0)  # 0 tokens; kept out of the usage metrics
+    return "\n\n".join([reply, *due_notes()])
+
+
 def chat_turn(history: list, user_text: str, user_key: str = "default") -> str:
     """One user message -> assistant reply. Applies all guardrails."""
     user_text = (user_text or "").strip()
@@ -1497,6 +1568,8 @@ def chat_turn(history: list, user_text: str, user_key: str = "default") -> str:
     if _rate_limited(user_key):
         return "You're sending messages too fast. Please wait a few minutes and try again."
     post_due_recurring()  # so status answers and alerts see today's automatic payments
+    if (local := _local_turn(history, user_text)) is not None:
+        return local
 
     recent = history[-MAX_HISTORY_MESSAGES:]
     while recent and recent[0]["role"] != "user":  # history must start with a user turn

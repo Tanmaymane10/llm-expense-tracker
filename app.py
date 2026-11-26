@@ -274,6 +274,7 @@ _READS = {
     "budget_progress": an.budget_progress, "budget_status": budget_status,
     "card_status": card_status, "subscription_status": subscription_status,
     "savings": savings, "list_cards": list_cards, "recent": _recent_rows,
+    "local_saves": an.local_saves,
 }
 
 
@@ -716,6 +717,8 @@ def render_llm_usage():
     c3.metric("Median latency", f"{s['p50_ms'] / 1000:.1f} s")
     c4.metric("95th percentile", f"{s['p95_ms'] / 1000:.1f} s")
     c5.metric("Success rate", f"{s['success_rate']:.0f}%")
+    st.caption(f"Saved without a model call today: {read('local_saves')} message(s). "
+               "These are not counted above.")
 
     daily = an.llm_daily(df)
     left, right = st.columns(2)

@@ -183,7 +183,21 @@ def load_llm_calls(include_eval: bool = False) -> pd.DataFrame:
     df["ts"] = pd.to_datetime(df["ts"], errors="coerce")
     df = df.dropna(subset=["ts"]).copy()
     df["date"] = df["ts"].dt.normalize()
+    df = df[df["purpose"] != "local"]  # local saves made no model call; see local_saves()
     return df if include_eval else df[df["purpose"] != "eval"]
+
+
+def local_saves(day: date = None) -> int:
+    """Messages saved by the local fast path (no model call) on `day` (default today)."""
+    from core import get_conn
+
+    with get_conn() as conn:
+        try:
+            return conn.execute("SELECT COUNT(*) FROM llm_calls WHERE purpose = 'local' "
+                                "AND substr(ts, 1, 10) = ?",
+                                ((day or date.today()).isoformat(),)).fetchone()[0]
+        except Exception:  # table not created yet
+            return 0
 
 
 def llm_summary(df: pd.DataFrame) -> dict:
