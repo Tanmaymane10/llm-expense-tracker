@@ -1390,6 +1390,11 @@ def _rate_limited(key: str) -> bool:
 
 
 # ---------------------------------------------------------------- Gemini calls
+# Built once: the declarations never change between calls.
+_GEMINI_TOOLS = [types.Tool(function_declarations=[
+    types.FunctionDeclaration(name=t["name"], description=t["description"],
+                              parameters_json_schema=t["parameters"])
+    for t in TOOLS])]
 _thinking_idx = 0  # index of the first thinking setting this model accepted
 
 
@@ -1434,15 +1439,12 @@ def _generate(contents: list, now: datetime = None, purpose: str = "chat"):
     Every call is recorded in the llm_calls table."""
     global _thinking_idx
     candidates = _thinking_candidates()
-    tools = [types.Tool(function_declarations=[
-        types.FunctionDeclaration(name=t["name"], description=t["description"],
-                                  parameters_json_schema=t["parameters"])
-        for t in TOOLS])]
+    prompt = system_prompt(now)  # once per call, not per retry (it reads the card list)
     started = time.perf_counter()
     for attempt in range(1, 7):
         config = types.GenerateContentConfig(
-            system_instruction=system_prompt(now),
-            tools=tools,
+            system_instruction=prompt,
+            tools=_GEMINI_TOOLS,
             tool_config=types.ToolConfig(
                 function_calling_config=types.FunctionCallingConfig(mode="ANY")),
             # We run the tools ourselves so we control the database writes.

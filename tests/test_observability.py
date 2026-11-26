@@ -79,3 +79,16 @@ def test_usage_summary_ignores_eval_runs_by_default(monkeypatch):
 def test_usage_summary_on_empty_database():
     assert an.llm_summary(an.load_llm_calls())["calls"] == 0
     assert an.llm_daily(an.load_llm_calls()).empty
+
+
+def test_tool_schemas_are_built_once(monkeypatch):
+    seen = []
+    resp = FakeResp([("out_of_scope", {})])
+    monkeypatch.setattr(core, "_client", fake_client(lambda **kw: seen.append(kw) or resp))
+
+    def no_rebuild(*a, **k):
+        raise AssertionError("tool declarations rebuilt per call")
+    monkeypatch.setattr(core.types, "FunctionDeclaration", no_rebuild)
+    core._generate([])
+    names = [f.name for f in seen[0]["config"].tools[0].function_declarations]
+    assert names == [t["name"] for t in core.TOOLS]
