@@ -260,3 +260,12 @@ def test_plan_saves_day_to_day_target_and_limit():
     assert core.get_d2d_limits() == (6000, 9000) and not at.exception
     labels = at.dataframe[0].value["label"].tolist()
     assert labels[-1] == "Total out budget" and "Investment" in labels
+
+
+def test_home_lists_every_card_and_undated_ones_link_to_plan():
+    at = run_app()
+    rows = [b for b in at.button if b.key and b.key.startswith("carddates_")]
+    assert len(rows) == 4  # the four seeded cards, none with billing dates yet
+    assert all(b.label == "Set billing dates in Plan" for b in rows)
+    rows[0].click().run()
+    assert active_view(at) == ["Plan"]

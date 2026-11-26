@@ -191,6 +191,16 @@ hr { border-color: var(--border); }
 .st-key-bottomnav button p { font-size: 11px !important; font-weight: 500; margin: 0; }
 .st-key-bottomnav button span[data-testid="stIconMaterial"] { font-size: 22px; }
 .st-key-bottomnav [data-testid="stBaseButton-primary"] { color: var(--accent) !important; }
+/* Home card rows: the "Set billing dates" button overlays the row's due slot */
+[class*="st-key-cardrow_"] { position: relative; gap: 0; }
+[class*="st-key-carddates_"] {
+  position: absolute; right: 14px; bottom: 8px; width: auto !important;
+}
+[class*="st-key-carddates_"] button {
+  min-height: 24px !important; padding: 0 !important; font-size: 12px;
+  color: var(--accent) !important; background: transparent !important; border: 0 !important;
+}
+[class*="st-key-carddates_"] button p { font-size: 12px !important; }
 .st-key-nav_add button {
   width: 56px; height: 56px; min-height: 56px; border-radius: 50% !important;
   margin-top: -26px;
@@ -729,7 +739,14 @@ def render_home():
 
     _section("Cards")
     cards = read("card_status", today)
-    st.html(ui.cards(cards, fig["upi_cash"]))
+    with st.container(key="cardlist", gap="small"):
+        for card in ui.sort_cards(cards):
+            with st.container(key=f"cardrow_{card['id']}"):
+                st.html(ui.card_row(card))
+                if not ui.has_dates(card):  # sits in the row's due slot (CSS)
+                    st.button("Set billing dates in Plan", key=f"carddates_{card['id']}",
+                              type="tertiary", on_click=_go, args=("Plan",))
+        st.html(ui.non_card_row(fig["upi_cash"]))
     for card in cards:
         if line := due_line(card, today):
             st.warning(line)

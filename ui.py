@@ -22,8 +22,14 @@ TINTS = {"food": ("#1F2A1A", ACCENT), "groceries": ("#1F2A1A", ACCENT),
          "shopping": ("#2D2616", WARN_INK), "bills": ("#232A33", "#C3CCD8"),
          "health": ("#2E1C22", DANGER_INK), "investment": ("#2A2140", "#B3A6FF"),
          "entertainment": ("#2A2140", "#B3A6FF")}
-CARD_ART = ["linear-gradient(135deg,#D7F76A,#8FD86B)", "linear-gradient(135deg,#3A4352,#1F252E)",
-            "linear-gradient(135deg,#5D6B80,#2C3441)"]
+CARD_ART = {  # by lower-cased card name; never the lime accent
+    "sbi cashback": "linear-gradient(135deg, #7B5CD6, #4A3590)",
+    "swiggy hdfc": "linear-gradient(135deg, #F08A3C, #2F6FD0)",
+    "hdfc moneyback": "linear-gradient(135deg, #8CC8F5, #4E97D6)",
+    "slice": "linear-gradient(135deg, #F07FB4, #B8487F)",
+    "slice upi": "linear-gradient(135deg, #F07FB4, #B8487F)",  # the name the seed data stores
+}
+CARD_ART_OTHER = "linear-gradient(135deg, #3A4352, #1F252E)"
 CARD = "background:#151A21;border:1px solid #232A33;border-radius:24px"
 WARN_SVG = ('<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
             'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
@@ -170,49 +176,74 @@ def due_text(days):
         600 if days <= 5 else 400
 
 
-def show_card(c: dict) -> bool:
-    """Home lists a card with spend this cycle or a due date within 7 days."""
-    due = c.get("days_to_due")
-    return bool(c["statement_day"]) and (bool(c["spent_cycle"]) or (due is not None and due <= 7))
+def card_art(name: str) -> str:
+    return CARD_ART.get((name or "").strip().lower(), CARD_ART_OTHER)
 
 
-def cards(rows: list, upi_cash: float) -> str:
-    out = []
-    for i, c in enumerate(r for r in rows if show_card(r)):
+def has_dates(c: dict) -> bool:
+    return bool(c["statement_day"] and c["due_day"])
+
+
+def bill_upcoming(c: dict) -> bool:
+    """Spend this cycle, or a closed bill still unpaid."""
+    return bool(c["spent_cycle"]) or (c["paid"] is False and bool(c["amount_due"]))
+
+
+def sort_cards(rows: list) -> list:
+    """Soonest due first (no bill = last), then spend this cycle high to low, then name."""
+    def key(c):
+        due = c["days_to_due"] if bill_upcoming(c) and c["days_to_due"] is not None else 10**6
+        return due, -(c["spent_cycle"] or 0), (c["card"] or "").lower()
+    return sorted(rows, key=key)
+
+
+def card_row(c: dict) -> str:
+    """One Home card row. A card without billing dates leaves the due slot to the app's
+    "Set billing dates in Plan" button."""
+    quiet = not bill_upcoming(c)
+    if not has_dates(c):
+        text, color, weight = "", MUTED, 400
+    elif quiet:
+        text, color, weight = "No bill due", MUTED, 400
+    else:
         text, color, weight = due_text(c["days_to_due"])
-        if c["limit"]:
-            used = c["utilisation"] or 0.0  # cycle spend plus any unpaid closed bill
-            unpaid = " · incl. unpaid bill" if c["paid"] is False and c["amount_due"] else ""
-            caption = f"of {money(c['limit'])} limit{unpaid}"
-            bar = (f'<div style="height:5px;border-radius:999px;background:{TRACK}"><div '
-                   f'style="height:5px;border-radius:999px;width:{min(used, 100):.1f}%;'
-                   f'background:{DANGER if used > 100 else WARN if used >= 80 else ACCENT}">'
-                   '</div></div>')
-        else:
-            caption, bar = "no limit set", ""
-        out.append(
-            '<div style="display:flex;align-items:center;gap:12px;background:#151A21;'
-            'border:1px solid #232A33;border-radius:18px;padding:12px 14px">'
-            f'<div style="width:46px;height:30px;border-radius:6px;'
-            f'background:{CARD_ART[i % len(CARD_ART)]};position:relative;flex-shrink:0">'
-            '<span style="position:absolute;left:6px;bottom:5px;width:9px;height:6px;'
-            'border-radius:2px;background:rgba(11,14,19,0.45)"></span></div>'
-            '<div style="flex-grow:1;min-width:0;display:flex;flex-direction:column;gap:6px">'
-            '<div style="display:flex;justify-content:space-between;gap:8px">'
-            '<span style="font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;'
-            f'white-space:nowrap">{e(c["card"])}</span><span class="num" style="font-size:14px;'
-            f'font-weight:600">{money(c["spent_cycle"])}</span></div>{bar}'
-            '<div style="display:flex;justify-content:space-between;gap:8px;font-size:12px">'
-            f'<span style="color:{MUTED}">{caption}</span>'
-            f'<span style="color:{color};font-weight:{weight};white-space:nowrap">{text}</span>'
-            '</div></div></div>')
-    out.append('<div style="display:flex;justify-content:space-between;align-items:center;'
-               'background:#151A21;border:1px solid #232A33;border-radius:18px;'
-               f'padding:12px 14px;font-size:14px"><span style="color:{MUTED}">UPI &amp; cash '
-               f'this month</span><span class="num" style="font-weight:600">{money(upi_cash)}'
-               '</span></div>')
-    return (f'<div style="display:flex;flex-direction:column;gap:10px;{FONT}">'
-            + "".join(out) + "</div>")
+    if c["limit"]:
+        used = c["utilisation"] or 0.0  # cycle spend plus any unpaid closed bill
+        unpaid = " · incl. unpaid bill" if c["paid"] is False and c["amount_due"] else ""
+        caption = f"of {money(c['limit'])} limit{unpaid}"
+        bar = (f'<div style="height:5px;border-radius:999px;background:{TRACK}"><div '
+               f'style="height:5px;border-radius:999px;width:{min(used, 100):.1f}%;'
+               f'background:{DANGER if used > 100 else WARN if used >= 80 else ACCENT}">'
+               '</div></div>')
+    else:
+        caption, bar = "no limit set", ""
+    amount = f"{money(0)} this cycle" if quiet else money(c["spent_cycle"])
+    ink = f"color:{MUTED};" if quiet else ""
+    return (
+        '<div style="display:flex;align-items:center;gap:12px;background:#151A21;'
+        f'border:1px solid #232A33;border-radius:18px;padding:12px 14px;{FONT}">'
+        f'<div style="width:46px;height:30px;border-radius:6px;'
+        f'background:{card_art(c["card"])};position:relative;flex-shrink:0">'
+        '<span style="position:absolute;left:6px;bottom:5px;width:9px;height:6px;'
+        'border-radius:2px;background:rgba(11,14,19,0.45)"></span></div>'
+        '<div style="flex-grow:1;min-width:0;display:flex;flex-direction:column;gap:6px">'
+        f'<div style="display:flex;justify-content:space-between;gap:8px;{ink}">'
+        '<span style="font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;'
+        f'white-space:nowrap">{e(c["card"])}</span><span class="num" style="font-size:14px;'
+        f'font-weight:600;white-space:nowrap">{amount}</span></div>{bar}'
+        '<div style="display:flex;justify-content:space-between;gap:8px;font-size:12px;'
+        'min-height:18px">'
+        f'<span style="color:{MUTED}">{caption}</span>'
+        f'<span style="color:{color};font-weight:{weight};white-space:nowrap">{text}</span>'
+        '</div></div></div>')
+
+
+def non_card_row(amount: float) -> str:
+    return ('<div style="display:flex;justify-content:space-between;align-items:center;'
+            'background:#151A21;border:1px solid #232A33;border-radius:18px;'
+            f'padding:12px 14px;font-size:14px;{FONT}"><span style="color:{MUTED}">UPI &amp; '
+            'cash this month</span><span class="num" style="font-weight:600">'
+            f'{money(amount)}</span></div>')
 
 
 def day_label(d: date, today: date) -> str:
