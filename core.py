@@ -635,6 +635,11 @@ GROUP_SQL = ("CASE WHEN counts_d2d = 1 THEN 'day-to-day' "
 D2D_DEFAULTS = {"d2d_target": 5000.0, "d2d_limit": 7000.0}
 
 
+def counts_by_default(category: str) -> bool:
+    """GROUP_SQL's answer for a new, non-recurring expense with no override."""
+    return category not in ("family", "investment", "bills")
+
+
 def get_d2d_limits() -> tuple:
     """(target, limit) for day-to-day spending per month."""
     with get_conn() as conn:

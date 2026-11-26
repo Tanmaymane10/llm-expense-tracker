@@ -161,3 +161,11 @@ def test_total_out_budget_counts_investments_and_alerts_once():
     lines = [ln for ln in reply.splitlines() if "budget" in ln.lower()]
     assert [ln.split(":")[0] for ln in lines] == ["Investment", "Total out budget"]
     assert "Overall" not in reply
+
+
+def test_python_default_matches_group_sql():
+    for cat in core.CATEGORIES:
+        add(cat, 1, cat)
+    got = groups()
+    expected = {c: core.counts_by_default(c) for c in core.CATEGORIES}
+    assert {c: got[c] == "day-to-day" for c in core.CATEGORIES} == expected

@@ -191,6 +191,40 @@ hr { border-color: var(--border); }
   position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0);
 }
 .st-key-nav_add span[data-testid="stIconMaterial"] { font-size: 26px; }
+/* quick-add sheet: anchored to the bottom on phones. Fallback: delete this block and it is
+   Streamlit's centered dialog with the same contents. */
+[data-testid="stDialog"] [role="dialog"] {
+  background: var(--surface) !important;
+  border: 1px solid #262D37;
+}
+/* pills: unselected = surface-2, selected = lime with dark text */
+button[data-variant="pills"] {
+  min-height: 36px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-2);
+  color: var(--text);
+}
+button[data-variant="pills"][aria-checked="true"],
+button[data-variant="pills"][aria-pressed="true"] {
+  background: var(--accent) !important;
+  border-color: var(--accent) !important;
+  color: var(--on-accent) !important;
+  font-weight: 600;
+}
+button[data-variant="pills"][aria-checked="true"] *,
+button[data-variant="pills"][aria-pressed="true"] * { color: inherit !important; }
+[class*="st-key-qa_amount"] input { font-size: 32px; font-weight: 700; }
+@media (max-width: 640px) {
+  [data-testid="stDialog"] { align-items: flex-end !important; padding: 0 !important; }
+  [data-testid="stDialog"] > div { width: 100% !important; max-width: 100% !important; }
+  [data-testid="stDialog"] [role="dialog"] {
+    width: 100% !important;
+    max-width: 100% !important;
+    max-height: 92dvh;
+    margin: 0 !important;
+    border-radius: 28px 28px 0 0 !important;
+  }
+}
 /* on phones, the keyboard owns the bottom of the screen while typing */
 @media (pointer: coarse) {
   body:has(textarea:focus, input:focus) .st-key-bottomnav { display: none; }
@@ -553,40 +587,70 @@ def render_undo():
         _after_write(" ".join(notes))
 
 
+def _open_sheet(cur: dict):
+    """Ask for the quick-add sheet on this run. `sheet` gives its widgets fresh keys, so a new
+    tap is prefilled from `cur` instead of keeping the last sheet's values."""
+    st.session_state.sheet = st.session_state.get("sheet", 0) + 1
+    st.session_state.qa_open = cur
+
+
+def _chip_picked(items: list, labels: list, key: str):
+    pick = st.session_state[key]
+    if pick is not None:
+        _open_sheet({} if pick == "+ Other" else items[labels.index(pick)])
+    st.session_state.qa_v = st.session_state.get("qa_v", 0) + 1  # unselect the chip
+
+
 def render_quick_add():
-    """Chips for the most frequent items; one tap opens a prefilled form. No model call."""
-    items, opts = read("quick_items"), read("payment_options")
+    """Chips for the most frequent items; a tap opens the prefilled sheet. No model call."""
+    items = read("quick_items")
     labels = [f"{r['item']} · {inr(r['amount_inr'])}" for r in items] + ["+ Other"]
-    v = st.session_state.get("qa_v", 0)  # bumped after a save, which resets the chips
-    pick = st.pills("Quick add", labels, key=f"qa_pick_{v}", label_visibility="collapsed")
-    if pick is None:
+    key = f"qa_pick_{st.session_state.get('qa_v', 0)}"
+    st.pills("Quick add", labels, key=key, label_visibility="collapsed",
+             on_change=_chip_picked, args=(items, labels, key))
+
+
+def _close_sheet():
+    st.session_state.pop("qa_open", None)
+
+
+@st.dialog("Add expense", on_dismiss=_close_sheet)
+def quick_add_sheet(cur: dict):
+    """Bottom sheet on phones (CSS on role=dialog). Not a form, so the Save label and the
+    day-to-day switch follow the other fields as they change."""
+    sid, opts = st.session_state.get("sheet", 0), read("payment_options")
+    item = st.text_input("Item", value=cur.get("item", ""), max_chars=80, key=f"qa_item_{sid}")
+    amount = st.number_input("Amount (₹)", 0.0, float(MAX_AMOUNT_INR), step=10.0,
+                             value=float(cur.get("amount_inr", 0.0)), key=f"qa_amount_{sid}")
+    last = core.payment_label(cur.get("payment_method"), cur.get("card_name"))
+    if cur:
+        st.caption(" · ".join(x for x in (f"Last time: {inr(cur['amount_inr'])}",
+                                          cur["category"], last) if x))
+    category = st.pills("Category", CATEGORIES, default=cur.get("category", "other"),
+                        required=True, key=f"qa_cat_{sid}")
+    method = st.pills("Paid with", list(opts), default=last if last in opts else None,
+                      key=f"qa_pay_{sid}")
+    at = st.time_input("Time (empty = now)", value=None, key=f"qa_time_{sid}")
+    default = core.counts_by_default(category)
+    counts = st.toggle("Counts toward day-to-day budget", value=default,
+                       key=f"qa_d2d_{sid}_{category}")  # a new category starts at its default
+    if not st.button(f"Save {inr(amount)}", type="primary", width="stretch",
+                     key=f"qa_save_{sid}"):
         return
-    cur = None if pick == "+ Other" else items[labels.index(pick)]
-    with st.form(f"qa_form_{v}"):
-        item = cur["item"] if cur else st.text_input("Item", max_chars=80)
-        c1, c2 = st.columns(2)
-        amount = c1.number_input("Amount (₹)", 0.0, float(MAX_AMOUNT_INR), step=10.0,
-                                 value=float(cur["amount_inr"]) if cur else 0.0)
-        category = c2.selectbox("Category", CATEGORIES,
-                                index=CATEGORIES.index(cur["category"] if cur else "other"))
-        last = cur and core.payment_label(cur["payment_method"], cur["card_name"])
-        method = st.pills("Paid with", list(opts), default=last if last in opts else None)
-        at = st.time_input("Time today (leave empty for now)", value=None)
-        if st.form_submit_button(f"Save {item}" if cur else "Save"):
-            payment_method, card_name = opts.get(method, (None, None))
-            try:
-                with _undoable():
-                        reply = core.quick_add(item, amount, category, payment_method,
-                                           card_name,
-                                           datetime.combine(date.today(), at) if at else None)
-            except ValueError as e:
-                st.error(str(e))
-                return
-            st.session_state.history += [  # tagged: shown in the chat, never sent to the model
-                {"role": "user", "content": f"Quick add: {item}", "source": "quick_add"},
-                {"role": "assistant", "content": reply, "source": "quick_add"}]
-            st.session_state.qa_v = v + 1
-            _after_write("Saved")
+    payment_method, card_name = opts.get(method, (None, None))
+    try:
+        with _undoable():
+            reply = core.quick_add(item, amount, category, payment_method, card_name,
+                                   datetime.combine(date.today(), at) if at else None,
+                                   counts_d2d=None if counts == default else counts)
+    except ValueError as e:
+        st.error(str(e))
+        return
+    st.session_state.history += [  # tagged: shown in the chat, never sent to the model
+        {"role": "user", "content": f"Quick add: {item}", "source": "quick_add"},
+        {"role": "assistant", "content": reply, "source": "quick_add"}]
+    _close_sheet()
+    _after_write("Saved")  # the full rerun closes the sheet
 
 
 def _lock():
@@ -976,7 +1040,7 @@ def render_nav():
         for entry in NAV:
             if entry is None:
                 st.button("Add expense", icon=":material/add:", key="nav_add",
-                          on_click=_go, args=("Home",))
+                          on_click=_open_sheet, args=({},))
                 continue
             name, icon = entry
             st.button(name, icon=icon, key=f"nav_{name}", on_click=_go, args=(name,),
@@ -995,4 +1059,6 @@ VIEWS = {"Home": render_home, "Analytics": render_analytics, "Plan": render_plan
          "Usage": render_llm_usage, "All": render_all}
 st.session_state.setdefault("view", "Home")
 render_nav()
+if (_cur := st.session_state.get("qa_open")) is not None:  # open until saved or dismissed
+    quick_add_sheet(_cur)
 VIEWS.get(st.session_state.view, render_home)()

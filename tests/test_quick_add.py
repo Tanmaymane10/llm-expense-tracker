@@ -107,13 +107,16 @@ def test_panel_tap_save_with_no_model_call(monkeypatch):
     chips = _widget(at.button_group, "Quick add")
     assert chips.options == ["chai · ₹15", "+ Other"]
     chips.set_value("chai · ₹15").run()
-    _widget(at.number_input, "Amount (₹)").set_value(18.0)
-    _widget(at.button, "Save chai").click().run()
+    assert _widget(at.text_input, "Item").value == "chai"  # the sheet is prefilled
+    assert any(c.value == "Last time: ₹15 · food" for c in at.caption)
+    _widget(at.number_input, "Amount (₹)").set_value(18.0).run()
+    _widget(at.button, "Save ₹18").click().run()
     assert not at.exception
-    assert query("SELECT item, amount_inr, category FROM expenses WHERE id = 2") == [
-        ("chai", 18.0, "food")]
+    assert query("SELECT item, amount_inr, category, counts_d2d FROM expenses WHERE id = 2") == [
+        ("chai", 18.0, "food", None)]
     assert at.chat_message[0].markdown[0].value == "Quick add: chai"
     assert _widget(at.button_group, "Quick add").value is None  # chips reset after a save
+    assert not [b for b in at.button if b.label.startswith("Save")]  # the sheet closed
 
 
 def test_panel_other_item_and_error(monkeypatch):
@@ -121,9 +124,31 @@ def test_panel_other_item_and_error(monkeypatch):
     _no_model(monkeypatch)
     at = run_app()
     _widget(at.button_group, "Quick add").set_value("+ Other").run()
-    _widget(at.button, "Save").click().run()  # empty item, zero amount
+    _widget(at.button, "Save ₹0").click().run()  # empty item, zero amount
     assert at.error and count_rows() == 0
     _widget(at.text_input, "Item").set_value("bath towel")
-    _widget(at.number_input, "Amount (₹)").set_value(504.0)
-    _widget(at.button, "Save").click().run()
+    _widget(at.number_input, "Amount (₹)").set_value(504.0).run()
+    _widget(at.button, "Save ₹504").click().run()
     assert query("SELECT item, category FROM expenses") == [("bath towel", "other")]
+
+
+def test_sheet_from_nav_and_day_to_day_switch(monkeypatch):
+    from test_app_smoke import _widget, run_app
+    _no_model(monkeypatch)
+    at = run_app("Usage")
+    at.button(key="nav_add").click().run()  # the "+" opens the sheet on any view
+    _widget(at.text_input, "Item").set_value("insurance")
+    _widget(at.number_input, "Amount (₹)").set_value(12000.0)
+    _widget(at.button_group, "Category").set_value("health").run()
+    assert _widget(at.toggle, "Counts toward day-to-day budget").value is True  # default
+    _widget(at.toggle, "Counts toward day-to-day budget").set_value(False).run()
+    _widget(at.button, "Save ₹12,000").click().run()
+
+    at.button(key="nav_add").click().run()
+    _widget(at.text_input, "Item").set_value("sip")
+    _widget(at.number_input, "Amount (₹)").set_value(8400.0)
+    _widget(at.button_group, "Category").set_value("investment").run()
+    assert _widget(at.toggle, "Counts toward day-to-day budget").value is False  # default
+    _widget(at.button, "Save ₹8,400").click().run()
+    assert query("SELECT item, counts_d2d FROM expenses") == [("insurance", 0), ("sip", None)]
+    assert not at.exception
