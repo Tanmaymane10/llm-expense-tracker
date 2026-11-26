@@ -258,3 +258,70 @@ def recent(df, today: date) -> str:
             f'padding:4px 14px">{"".join(items)}</div></div>')
     return (f'<div style="display:flex;flex-direction:column;gap:10px;{FONT}">'
             + "".join(days) + "</div>")
+
+
+def span_label(start: date, end: date) -> str:
+    if (start.year, start.month) == (end.year, end.month):
+        return f"{start.day}–{end.day} {end:%b}"
+    return f"{start.day} {start:%b} – {end.day} {end:%b}"
+
+
+def daily_head(total: float, prev: float, prev_label: str, start: date, end: date) -> str:
+    diff = total - prev
+    ink = DANGER_INK if diff > 0 else CREDIT
+    change = (f'<span class="num" style="font-size:13px;color:{ink}">'
+              f'{"▲" if diff > 0 else "▼"} {money(abs(diff))} vs {e(prev_label)}</span>'
+              if prev else "")
+    return (f'<div style="display:flex;flex-direction:column;gap:6px;{FONT}">'
+            f'<span style="font-size:13px;color:{MUTED}">Day-to-day, '
+            f'{span_label(start, end)}</span>'
+            '<div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap">'
+            f'<span class="num" style="font-size:32px;font-weight:700">{money(total)}</span>'
+            f'{change}</div></div>')
+
+
+def daily_foot(start: date, end: date, biggest) -> str:
+    """biggest: (date, amount) or None."""
+    mid = f"Biggest day: {biggest[0]:%a} {biggest[0].day}, {inr(biggest[1])}" if biggest else ""
+    return (f'<div style="display:flex;justify-content:space-between;gap:8px;font-size:11px;'
+            f'color:{MUTED};{FONT.split(";")[0]}"><span>{start.day} {start:%b}</span>'
+            f'<span>{e(mid)}</span><span>{end.day} {end:%b}</span></div>')
+
+
+def bars(title: str, note: str, rows: list, footer: str = "") -> str:
+    """rows: dicts with name, spent, of (text), pct (0..100 bar width), state ok/near/over."""
+    color = {"ok": ACCENT, "near": WARN, "over": DANGER}
+    items = "".join(
+        '<div style="display:flex;flex-direction:column;gap:6px">'
+        '<div style="display:flex;justify-content:space-between;gap:8px;font-size:14px">'
+        f'<span style="font-weight:500">{e(r["name"])}</span><span class="num"><b style="color:'
+        f'{DANGER_INK if r["state"] == "over" else "#EEF2F6"}">{money(r["spent"])}</b> '
+        f'<span style="color:{MUTED}">{e(r["of"])}</span></span></div>'
+        f'<div style="height:8px;border-radius:999px;background:{TRACK}"><div style="height:8px;'
+        f'border-radius:999px;width:{max(0, min(r["pct"], 100)):.1f}%;'
+        f'background:{color[r["state"]]}"></div></div></div>' for r in rows)
+    foot = (f'<div style="font-size:13px;color:{MUTED};border-top:1px solid {TRACK};'
+            f'padding-top:10px">{footer}</div>' if footer else "")
+    return (f'<section aria-label="{e(title)}" style="{CARD};padding:18px;display:flex;'
+            f'flex-direction:column;gap:14px;{FONT}"><div style="display:flex;'
+            'justify-content:space-between;align-items:center"><h2 style="margin:0;'
+            f'font-size:17px;font-weight:600">{e(title)}</h2><span style="font-size:12px;'
+            f'color:{MUTED}">{e(note)}</span></div>{items}{foot}</section>')
+
+
+PAY_COLORS = [ACCENT, "#6FB7F2", "#8B7CF6", "#4A5566", WARN, "#B3A6FF", "#C3CCD8"]
+
+
+def by_payment(rows: list) -> str:
+    """rows: (label, amount, share %) sorted by amount."""
+    items = "".join(
+        '<div style="display:flex;align-items:center;gap:10px;font-size:14px">'
+        f'<span style="width:10px;height:10px;border-radius:3px;flex-shrink:0;'
+        f'background:{PAY_COLORS[i % len(PAY_COLORS)]}"></span>'
+        f'<span style="flex-grow:1;min-width:0;overflow-wrap:anywhere">{e(name)}</span>'
+        f'<span class="num" style="color:{MUTED};font-size:12px">{share:.0f}%</span>'
+        f'<span class="num" style="font-weight:600;min-width:64px;text-align:right">'
+        f'{money(amount)}</span></div>' for i, (name, amount, share) in enumerate(rows))
+    return (f'<section aria-label="By payment method" style="{CARD};padding:18px;display:flex;'
+            f'flex-direction:column;gap:12px;{FONT}"><h2 style="margin:0;font-size:17px;'
+            f'font-weight:600">By payment method</h2>{items}</section>')

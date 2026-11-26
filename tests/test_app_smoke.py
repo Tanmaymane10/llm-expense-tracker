@@ -57,15 +57,14 @@ def test_app_loads_with_empty_database():
         assert not go(at, view).exception and active_view(at) == [view]
 
 
-@pytest.mark.parametrize("period", ["This month", "Last 30 days", "Last 90 days",
-                                    "All time", "Custom"])
+@pytest.mark.parametrize("period", ["Month", "30 days", "90 days", "Custom"])
 def test_every_period_renders_without_errors(period):
     from datetime import date, timedelta
     for days_ago in (0, 2, 10, 40):
         day = (date.today() - timedelta(days=days_ago)).isoformat()
         insert_expense("chai", 15, "food", f"{day} 09:00")
     at = run_app("Analytics")
-    at.radio[0].set_value(period).run()
+    period_control(at).set_value(period).run()
     assert not at.exception
 
 
@@ -82,6 +81,10 @@ def test_llm_usage_tab_renders_with_recorded_calls():
     assert not at.exception
     labels = [m.label for m in at.metric]
     assert "Calls today" in labels and "Success rate" in labels
+
+
+def period_control(at):
+    return at.button_group(key="period")
 
 
 def _walk(node):
@@ -177,16 +180,16 @@ def test_only_the_selected_view_runs(monkeypatch):
     monkeypatch.setattr(an, "load_expenses", lambda: loads.append(1) or real())
     insert_expense("chai", 15, "food", f"{date.today()} 09:00")
     at = run_app()
-    assert not at.radio and not loads  # Home: no Period control, no full expense load
+    assert "period" not in [b.key for b in at.button_group] and not loads  # Home: no full load
     go(at, "Analytics")
-    assert at.radio and loads
+    assert at.button_group(key="period") and loads
 
 
 def test_chat_save_clears_the_cache_so_analytics_is_fresh(monkeypatch):
     import core
     insert_expense("chai", 15, "food", f"{date.today()} 09:00")
     at = run_app("Analytics")
-    total = lambda: _widget(at.metric, "Total spent").value  # noqa: E731
+    total = lambda: _widget(at.metric, "Total out").value  # noqa: E731
 
     assert total() == "₹15"
     insert_expense("auto", 80, "transport", f"{date.today()} 10:00")  # cached: not seen yet
@@ -210,15 +213,15 @@ def test_analytics_period_survives_a_view_switch():
     from datetime import timedelta
     insert_expense("chai", 15, "food", f"{date.today()} 09:00")
     at = run_app("Analytics")
-    at.radio[0].set_value("Last 90 days").run()
+    period_control(at).set_value("90 days").run()
     go(go(at, "Plan"), "Analytics")
-    assert at.radio[0].value == "Last 90 days"
+    assert period_control(at).value == "90 days"
 
-    at.radio[0].set_value("Custom").run()
+    period_control(at).set_value("Custom").run()
     picked = (date.today() - timedelta(days=5), date.today())
     at.date_input[0].set_value(picked).run()
     go(go(at, "Home"), "Analytics")
-    assert at.radio[0].value == "Custom" and tuple(at.date_input[0].value) == picked
+    assert period_control(at).value == "Custom" and tuple(at.date_input[0].value) == picked
     assert not at.exception
 
 

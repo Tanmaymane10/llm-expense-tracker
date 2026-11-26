@@ -65,7 +65,11 @@ THEME_CSS = """
   padding: 22px 20px 132px;
 }
 [data-testid="stMetricValue"], .num { font-variant-numeric: tabular-nums; }
-h1 { font-size: 26px; font-weight: 700; letter-spacing: 0; }
+h1 {
+  font-size: 26px !important;
+  font-weight: 700 !important;
+  padding-top: 0 !important;
+}
 h2, h3 { font-size: 17px !important; font-weight: 600 !important; }
 [data-testid="stCaptionContainer"],
 [data-testid="stCaptionContainer"] p {
@@ -97,6 +101,27 @@ a { color: var(--accent); }
   overflow: hidden;
 }
 
+.st-key-daily_card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 24px;
+  padding: 18px 18px 12px;
+  gap: 10px;
+}
+.st-key-daily_card [data-testid="stVegaLiteChart"],
+.st-key-daily_card [data-testid="stArrowVegaLiteChart"] {
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
+.st-key-tiles [data-testid="stMetric"] {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 14px 16px;
+}
+.st-key-tiles > div { flex: 1 1 0; min-width: 0; }
+.st-key-tiles [data-testid="stMetricValue"] { font-size: 18px; }
 /* buttons: secondary = surface pill, primary = lime */
 .stButton > button, .stDownloadButton > button, .stFormSubmitButton > button {
   min-height: 44px;
@@ -235,14 +260,14 @@ button[data-variant="pills"][aria-pressed="true"] * { color: inherit !important;
 
 # ---- chart helpers: transparent background, no grid clutter, the THEME_CSS tokens
 ACCENT, ACCENT_SOFT = "#C8F25A", "rgba(200,242,90,0.45)"  # = --accent in THEME_CSS
-MUTED, GRID = "#8C97A6", "rgba(255,255,255,0.05)"
+MUTED = "#8C97A6"
 WARN, DANGER = "#F5B84B", "#FF7A7A"
 
 
 def _style(chart):
     return (chart.configure(background="transparent")
             .configure_view(stroke=None, fill="transparent")
-            .configure_axis(domain=False, ticks=False, gridColor=GRID, labelColor=MUTED,
+            .configure_axis(domain=False, ticks=False, grid=False, labelColor=MUTED,
                             titleColor=MUTED, labelFontSize=12, labelPadding=6)
             .configure_legend(labelColor=MUTED, titleColor=MUTED, orient="top",
                               symbolType="stroke", title=None, labelFontSize=12))
@@ -270,6 +295,29 @@ def glass_line_chart(df: pd.DataFrame, date_format: str = "%d %b"):
                                                         "right": 28}))
 
 
+def daily_chart(daily: pd.DataFrame):
+    """daily: an.daily_series() frame. No axes: the card's caption names the dates."""
+    data = daily.rename_axis("date").reset_index().rename(columns={"Daily": "v",
+                                                                   "7-day avg": "avg"})
+    x = alt.X("date:T", axis=None, scale=alt.Scale(nice=False))
+    y = alt.Y("v:Q", axis=None, scale=alt.Scale(domainMin=0, nice=True))
+    base = alt.Chart(data).encode(x=x)
+    fill = base.mark_area(interpolate="monotone", line=False, color=alt.Gradient(
+        gradient="linear", x1=1, x2=1, y1=1, y2=0,
+        stops=[alt.GradientStop(color="rgba(200,242,90,0)", offset=0),
+               alt.GradientStop(color="rgba(200,242,90,0.28)", offset=1)])).encode(y=y)
+    line = base.mark_line(color=ACCENT, strokeWidth=2.2, interpolate="monotone").encode(
+        y=y, tooltip=[alt.Tooltip("date:T", format="%a %d %b"),
+                      alt.Tooltip("v:Q", format=",.0f", title="₹")])
+    avg = base.mark_line(color=MUTED, strokeWidth=1.6, strokeDash=[4, 4],
+                         interpolate="monotone").encode(y=alt.Y("avg:Q", axis=None))
+    peak = alt.Chart(data.nlargest(1, "v").query("v > 0")).mark_point(
+        filled=True, fill="#0B0E13", stroke=ACCENT, strokeWidth=2, size=70).encode(x=x, y=y)
+    return (fill + line + avg + peak).properties(
+        height=130, padding={"left": 0, "top": 6, "right": 0, "bottom": 0}).configure(
+        background="transparent").configure_view(stroke=None, fill="transparent")
+
+
 def glass_bar_chart(df: pd.DataFrame, color: str = ACCENT):
     """df: one value column, index = labels (text or dates). Keeps the row order."""
     col = df.columns[0]
@@ -287,30 +335,6 @@ def glass_bar_chart(df: pd.DataFrame, color: str = ACCENT):
                      tooltip=["label", alt.Tooltip("value:Q", format=",.0f", title=col)])
              .properties(height=240))
     return _style(chart)
-
-
-def budget_chart(df: pd.DataFrame):
-    """df from an.budget_progress(): % of each budget used, coloured by state, line at 100%."""
-    pairs = zip(df["spent"], df["budget"], strict=True)
-    data = df.assign(label=df["category"].str.capitalize(),
-                     text=[f"{inr(s)} / {inr(b)}" for s, b in pairs])
-    y = alt.Y("label:N", sort=None, title=None, axis=alt.Axis(grid=False))
-    x = alt.X("pct:Q", title=None, axis=alt.Axis(format=".0f", labelExpr="datum.label + '%'",
-                                           tickCount=6, labelFlush=True),
-              scale=alt.Scale(domain=[0, max(100, float(data["pct"].max()) * 1.15)], nice=False))
-    bars = alt.Chart(data).mark_bar(cornerRadiusEnd=6, size=18).encode(
-        x=x, y=y,
-        color=alt.Color("state:N", legend=None, scale=alt.Scale(
-            domain=["ok", "warn", "over"], range=[ACCENT, WARN, DANGER])),
-        tooltip=["label", alt.Tooltip("spent:Q", format=",.0f", title="Spent (₹)"),
-                 alt.Tooltip("budget:Q", format=",.0f", title="Budget (₹)"),
-                 alt.Tooltip("pct:Q", format=".0f", title="% used")])
-    text = bars.mark_text(align="left", dx=6, color=MUTED).encode(text="text:N")
-    limit = alt.Chart(pd.DataFrame({"pct": [100]})).mark_rule(
-        color=MUTED, strokeDash=[4, 4]).encode(x="pct:Q")
-    # right padding leaves room for the "₹spent / ₹budget" label past the longest bar
-    return _style((bars + text + limit).properties(
-        height=40 * len(data) + 20, padding={"left": 5, "top": 5, "bottom": 5, "right": 110}))
 
 
 # ---- cached reads: heavy reads are cached for 60 s, so writes from Telegram or the recurring
@@ -333,7 +357,7 @@ def _recent_rows() -> pd.DataFrame:
 
 _READS = {
     "expenses": an.load_expenses, "income": an.load_income, "llm_calls": an.load_llm_calls,
-    "budget_progress": an.budget_progress, "budget_status": budget_status,
+    "budget_status": budget_status,
     "card_status": card_status, "subscription_status": subscription_status,
     "savings": savings, "list_cards": list_cards, "recent": _recent_rows,
     "local_saves": an.local_saves, "quick_items": core.quick_items,
@@ -803,183 +827,227 @@ def render_recent():
             st.rerun()
 
 
-def render_analytics():
-    df_all = read("expenses")
-    if df_all.empty:
-        st.info("Log some expenses in the Chat tab and your analytics will appear here.")
-        return
+PERIODS = ["Month", "30 days", "90 days", "Custom"]
 
-    today = date.today()
-    preset = st.radio("Period", ["This month", "Last 30 days", "Last 90 days",
-                                 "All time", "Custom"], horizontal=True,
-                      key="period", persist_state="session")  # kept while another view shows
-    if preset == "This month":
-        start, end = today.replace(day=1), today
-    elif preset == "Last 30 days":
-        start, end = today - timedelta(days=29), today
-    elif preset == "Last 90 days":
-        start, end = today - timedelta(days=89), today
-    elif preset == "All time":
-        start, end = df_all["date"].min().date(), max(df_all["date"].max().date(), today)
-    else:
+
+def _period(preset: str, today: date):
+    """(start, end, previous start, previous end, previous label) or None while the custom
+    range is incomplete. Month compares with the same days of last month."""
+    if preset == "Custom":
         picked = st.date_input("Date range", value=(today - timedelta(days=29), today),
                                key="period_range", persist_state="session")
         if not (isinstance(picked, (tuple, list)) and len(picked) == 2):
-            st.info("Pick both a start and an end date.")
-            return
+            return None
         start, end = picked
+    else:
+        start = today.replace(day=1) if preset == "Month" else \
+            today - timedelta(days=int(preset.split()[0]) - 1)
+        end = today
+    n = (end - start).days + 1
+    if preset == "Month":
+        p_start = (start - timedelta(days=1)).replace(day=1)
+        return start, end, p_start, min(p_start + timedelta(days=n - 1),
+                                         start - timedelta(days=1)), f"same days in {p_start:%b}"
+    return start, end, start - timedelta(days=n), start - timedelta(days=1), \
+        f"previous {n} days"
 
+
+def _where_it_went(spent: pd.DataFrame, month: bool) -> list:
+    """Category bars: against the monthly budget for Month, else share of the period."""
+    budgets = ({r["category"]: r["budget"] for r in read("budget_status") if
+                r["category"] != "overall"} if month else {})
+    total = float(spent["amount_inr"].sum()) or 1.0
+    rows = []
+    for cat, amount in spent.groupby("category")["amount_inr"].sum().sort_values(
+            ascending=False).items():
+        if budgets.get(cat):
+            used = 100 * amount / budgets[cat]
+            rows.append({"name": cat, "spent": amount, "of": f"of {inr(budgets[cat])}",
+                         "pct": used, "state": "over" if used > 100 else
+                         "near" if used >= 80 else "ok"})
+        else:
+            share = 100 * amount / total
+            rows.append({"name": cat, "spent": amount, "pct": share, "state": "ok",
+                         "of": "no budget" if month else f"{share:.0f}%"})
+    return rows
+
+
+def _by_payment(spent: pd.DataFrame) -> list:
+    labels = [core.payment_label(m, c) or "Unknown" for m, c in
+              zip(spent["payment_method"], spent["card_name"], strict=True)]
+    sums = spent.groupby(pd.Series(labels, index=spent.index))["amount_inr"].sum()
+    total = float(sums.sum()) or 1.0
+    return [(k, v, 100 * v / total) for k, v in sums.sort_values(ascending=False).items()]
+
+
+def render_analytics():
+    st.title("Analytics")
+    df_all = read("expenses")
+    if df_all.empty:
+        st.info("Log some expenses on Home and your analytics will appear here.")
+        return
+
+    today = date.today()
+    preset = st.segmented_control("Period", PERIODS, default="Month", required=True,
+                                  key="period", persist_state="session", width="stretch",
+                                  label_visibility="collapsed")  # kept while another view shows
+    span = _period(preset, today)
+    if span is None:
+        st.info("Pick both a start and an end date.")
+        return
+    start, end, p_start, p_end, p_label = span
     df = an.filter_range(df_all, start, end)
     if df.empty:
         st.warning("No expenses in this period.")
         return
 
-    # --- headline numbers
-    k = an.kpis(df, start, end)
-    mc = an.month_comparison(df_all, today)
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Total spent", inr(k["total"]))
-    c2.metric("Average per day", inr(round(k["avg_per_day"])))
-    c3.metric("Purchases", k["transactions"])
-    c4.metric("Top category", k["top_category"], inr(k["top_category_amount"]),
-              delta_color="off")
-    c1, c2 = st.columns(2)
-    if mc["has_prev"]:
-        diff = mc["this"] - mc["prev_same_days"]
-        c1.metric("This month so far vs same days last month",
-                  inr(mc["this"]), ("+" if diff > 0 else "") + inr(diff),
-                  delta_color="inverse")
-    c2.metric("Projected month-end", inr(round(an.month_projection(df_all, today))),
-              help="Spending pace so far this month (subscriptions excluded), plus "
-                   "subscriptions logged and still due this month.")
+    # day-to-day: the same money the Home hero tracks
+    d2d = df[df["grp"] == "day-to-day"]
+    prev = an.filter_range(df_all, p_start, p_end)
+    daily = an.daily_series(d2d, start, end)
+    with st.container(key="daily_card"):
+        st.html(ui.daily_head(float(d2d["amount_inr"].sum()),
+                              float(prev.loc[prev["grp"] == "day-to-day", "amount_inr"].sum()),
+                              p_label, start, end))
+        st.altair_chart(daily_chart(daily), width="stretch", theme=None)
+        top = daily["Daily"].idxmax() if daily["Daily"].max() > 0 else None
+        st.html(ui.daily_foot(start, end, top and (top.date(), daily["Daily"].max())))
+    w = an.weekday_vs_weekend(d2d, start, end)
+    with st.container(horizontal=True, key="tiles"):
+        st.metric("Average per day", inr(round(daily["Daily"].mean())))
+        st.metric("Weekend vs weekday",
+                  f"{inr(round(w['weekend_avg']))} / {inr(round(w['weekday_avg']))}")
 
-    # --- budgets (always this month, whatever the period above)
-    st.subheader("Budgets this month")
-    budgets = read("budget_progress")
-    if budgets.empty:
-        st.caption("No budgets yet. Set them in the Plan tab or say \"food budget 6000\" in Chat.")
-    else:
-        st.altair_chart(budget_chart(budgets), width="stretch", theme=None)
+    # invested money is saved, never "spent"
+    spent = df[df["grp"] != "invested"]
+    invested = float(df.loc[df["grp"] == "invested", "amount_inr"].sum())
+    foot = f"Invested {ui.money(invested)}, not counted as spent" if invested else ""
+    st.html(ui.bars("Where it went", "vs budget" if preset == "Month" else "share",
+                    _where_it_went(spent, preset == "Month"), foot))
+    st.html(ui.by_payment(_by_payment(spent)))
 
-    # --- income and savings (per month, whatever the period above)
-    st.subheader("Income and savings")
-    s = read("savings", today.strftime("%Y-%m"))
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Income this month", inr(s["income"]))
-    c2.metric("Saved this month", inr(s["net"]))
-    c3.metric("Savings rate", "n/a" if s["rate"] is None else f"{s['rate']:.0f}%")
-    income = read("income")
-    if income.empty:
-        st.caption("No income yet. Add it in the Plan tab or say \"got salary 50000\" in Chat.")
-    else:
-        monthly = an.savings_by_month(df_all, income).tail(12)
-        st.altair_chart(glass_line_chart(monthly, "%b %Y"), width="stretch", theme=None)
+    with st.expander("More"):
+        # --- headline numbers
+        k = an.kpis(df, start, end)
+        mc = an.month_comparison(df_all, today)
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Total out", inr(k["total"]))
+        c2.metric("Average per day", inr(round(k["avg_per_day"])))
+        c3.metric("Purchases", k["transactions"])
+        c4.metric("Top category", k["top_category"], inr(k["top_category_amount"]),
+                  delta_color="off")
+        c1, c2 = st.columns(2)
+        if mc["has_prev"]:
+            diff = mc["this"] - mc["prev_same_days"]
+            c1.metric("This month so far vs same days last month",
+                      inr(mc["this"]), ("+" if diff > 0 else "") + inr(diff),
+                      delta_color="inverse")
+        c2.metric("Projected month-end", inr(round(an.month_projection(df_all, today))),
+                  help="Spending pace so far this month (subscriptions excluded), plus "
+                       "subscriptions logged and still due this month.")
 
-    # --- daily trend
-    st.subheader("Daily spending")
-    st.altair_chart(glass_line_chart(an.daily_series(df, start, end)),
-                    width="stretch", theme=None)
+        # --- income and savings (per month, whatever the period above)
+        st.subheader("Income and savings")
+        s = read("savings", today.strftime("%Y-%m"))
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Income this month", inr(s["income"]))
+        c2.metric("Saved this month", inr(s["net"]))
+        c3.metric("Savings rate", "n/a" if s["rate"] is None else f"{s['rate']:.0f}%")
+        income = read("income")
+        if income.empty:
+            st.caption("No income yet. Add it in the Plan tab or say \"got salary 50000\" in Chat.")
+        else:
+            monthly = an.savings_by_month(df_all, income).tail(12)
+            st.altair_chart(glass_line_chart(monthly, "%b %Y"), width="stretch", theme=None)
 
-    left, right = st.columns(2)
-    with left:
-        st.subheader("Where the money goes")
-        st.dataframe(
-            _money(an.category_table(df), "total"), hide_index=True, width="stretch",
-            column_config={
-                "category": "Category",
-                "total": "Total (₹)",
-                "purchases": "Purchases",
-                "share_pct": st.column_config.ProgressColumn(
-                    "Share", format="%.0f%%", min_value=0, max_value=100, color=ACCENT),
-            })
-    with right:
-        st.subheader("Monthly totals")
-        st.altair_chart(glass_bar_chart(an.monthly_trend(df_all)),
-                        width="stretch", theme=None)
+        with st.container():
+            st.subheader("Monthly totals")
+            st.altair_chart(glass_bar_chart(an.monthly_trend(df_all)),
+                            width="stretch", theme=None)
 
-    left, right = st.columns(2)
-    with left:
-        st.subheader("Weekdays vs weekends")
-        w = an.weekday_vs_weekend(df, start, end)
-        m1, m2 = st.columns(2)
-        m1.metric("Weekday avg / day", inr(round(w["weekday_avg"])))
-        m2.metric("Weekend avg / day", inr(round(w["weekend_avg"])))
-        st.altair_chart(glass_bar_chart(an.by_weekday(df, start, end)),
-                        width="stretch", theme=None)
-    with right:
-        st.subheader("Top items")
-        st.dataframe(_money(an.top_items(df), "total"), hide_index=True, width="stretch",
-                     column_config={"item": "Item", "total": "Total (₹)", "times": "Times"})
-        st.subheader("Biggest single expenses")
-        st.dataframe(_money(an.biggest_expenses(df), "amount_inr"), hide_index=True,
-                     width="stretch",
-                     column_config={"spent_at": "Time", "item": "Item",
-                                    "amount_inr": "Amount (₹)", "category": "Category"})
+        left, right = st.columns(2)
+        with left:
+            st.subheader("Weekdays vs weekends")
+            w = an.weekday_vs_weekend(df, start, end)
+            m1, m2 = st.columns(2)
+            m1.metric("Weekday avg / day", inr(round(w["weekday_avg"])))
+            m2.metric("Weekend avg / day", inr(round(w["weekend_avg"])))
+            st.altair_chart(glass_bar_chart(an.by_weekday(df, start, end)),
+                            width="stretch", theme=None)
+        with right:
+            st.subheader("Top items")
+            st.dataframe(_money(an.top_items(df), "total"), hide_index=True, width="stretch",
+                         column_config={"item": "Item", "total": "Total (₹)", "times": "Times"})
+            st.subheader("Biggest single expenses")
+            st.dataframe(_money(an.biggest_expenses(df), "amount_inr"), hide_index=True,
+                         width="stretch",
+                         column_config={"spent_at": "Time", "item": "Item",
+                                        "amount_inr": "Amount (₹)", "category": "Category"})
 
-    # --- credit-card spending for the selected period
-    st.divider()
-    st.subheader("Credit-card spending")
+        # --- credit-card spending for the selected period
+        st.divider()
+        st.subheader("Credit-card spending")
 
-    card_summary, card_transactions = an.credit_card_spending(df)
+        card_summary, card_transactions = an.credit_card_spending(df)
 
-    if card_summary.empty:
-        st.info("No recorded credit-card purchases in this period.")
-    else:
-        total_card_spend = card_summary["total_spend"].sum()
-        st.metric("Total credit-card spending", inr(total_card_spend))
+        if card_summary.empty:
+            st.info("No recorded credit-card purchases in this period.")
+        else:
+            total_card_spend = card_summary["total_spend"].sum()
+            st.metric("Total credit-card spending", inr(total_card_spend))
 
-        st.caption("Spending by card")
-        st.dataframe(
-            _money(card_summary.rename(columns={"card_name": "Credit card",
-                                                "total_spend": "Total spent (₹)",
-                                                "transactions": "Purchases"}),
-                   "Total spent (₹)"),
-            hide_index=True,
-            width="stretch",
+            st.caption("Spending by card")
+            st.dataframe(
+                _money(card_summary.rename(columns={"card_name": "Credit card",
+                                                    "total_spend": "Total spent (₹)",
+                                                    "transactions": "Purchases"}),
+                       "Total spent (₹)"),
+                hide_index=True,
+                width="stretch",
+            )
+
+            st.caption("Credit-card transactions")
+            transaction_columns = [
+                col for col in
+                ["spent_at", "item", "amount_inr", "card_name"]
+                if col in card_transactions.columns
+            ]
+            st.dataframe(
+                _money(card_transactions[transaction_columns].rename(
+                    columns={
+                        "spent_at": "Date",
+                        "item": "Item",
+                        "amount_inr": "Amount (₹)",
+                        "card_name": "Credit card",
+                    }
+                ), "Amount (₹)"),
+                hide_index=True,
+                width="stretch",
+            )
+
+        st.subheader("Card cycles")
+        cards = pd.DataFrame(read("card_status"))
+        cards = cards[cards["statement_day"].notna()] if not cards.empty else cards
+        if cards.empty:
+            st.caption("Set a card's statement day in the Plan tab to see its cycle.")
+        else:
+            st.dataframe(
+                _money(cards[["card", "amount_due", "due_date", "paid", "spent_cycle",
+                              "utilisation"]], "amount_due", "spent_cycle"),
+                hide_index=True, width="stretch",
+                column_config={
+                    "card": "Card", "paid": "Paid", "due_date": "Due",
+                    "amount_due": "Amount due (₹)", "spent_cycle": "Spent this cycle (₹)",
+                    "utilisation": st.column_config.ProgressColumn(
+                        "Limit used", format="%.0f%%", min_value=0, max_value=100, color=ACCENT),
+                })
+
+        st.download_button(
+            "Download this period as CSV",
+            df.drop(columns=["date", "month"]).to_csv(index=False),
+            file_name=f"expenses_{start}_{end}.csv",
+            mime="text/csv",
         )
-
-        st.caption("Credit-card transactions")
-        transaction_columns = [
-            col for col in
-            ["spent_at", "item", "amount_inr", "card_name"]
-            if col in card_transactions.columns
-        ]
-        st.dataframe(
-            _money(card_transactions[transaction_columns].rename(
-                columns={
-                    "spent_at": "Date",
-                    "item": "Item",
-                    "amount_inr": "Amount (₹)",
-                    "card_name": "Credit card",
-                }
-            ), "Amount (₹)"),
-            hide_index=True,
-            width="stretch",
-        )
-
-    st.subheader("Card cycles")
-    cards = pd.DataFrame(read("card_status"))
-    cards = cards[cards["statement_day"].notna()] if not cards.empty else cards
-    if cards.empty:
-        st.caption("Set a card's statement day in the Plan tab to see its cycle.")
-    else:
-        st.dataframe(
-            _money(cards[["card", "amount_due", "due_date", "paid", "spent_cycle",
-                          "utilisation"]], "amount_due", "spent_cycle"),
-            hide_index=True, width="stretch",
-            column_config={
-                "card": "Card", "paid": "Paid", "due_date": "Due",
-                "amount_due": "Amount due (₹)", "spent_cycle": "Spent this cycle (₹)",
-                "utilisation": st.column_config.ProgressColumn(
-                    "Limit used", format="%.0f%%", min_value=0, max_value=100, color=ACCENT),
-            })
-
-    st.download_button(
-        "Download this period as CSV",
-        df.drop(columns=["date", "month"]).to_csv(index=False),
-        file_name=f"expenses_{start}_{end}.csv",
-        mime="text/csv",
-    )
 
 
 def render_llm_usage():

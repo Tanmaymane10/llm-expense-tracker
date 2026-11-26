@@ -55,3 +55,15 @@ def test_hero_escapes_category_alert():
 def test_day_labels():
     assert ui.day_label(date(2026, 11, 25), TODAY) == "Yesterday · Wed 25 Nov"
     assert ui.day_label(date(2026, 11, 22), TODAY) == "Sun 22 Nov"
+
+
+def test_analytics_bars_and_payments_escape():
+    out = ui.bars("Where it went", "vs budget",
+                  [{"name": XSS, "spent": 4696, "of": "of ₹4,000", "pct": 117, "state": "over"}])
+    _safe(out)
+    assert "width:100.0%" in out and ui.DANGER in out  # capped at full width, red
+    _safe(ui.by_payment([(XSS, 2060, 33.0)]))
+    assert "Biggest day: Sun 22, ₹1,288" in ui.daily_foot(date(2026, 11, 1), TODAY,
+                                                         (date(2026, 11, 22), 1288))
+    assert "▲ ₹1,180 vs same days in Oct" in ui.daily_head(6240, 5060, "same days in Oct",
+                                                          date(2026, 11, 1), TODAY)
