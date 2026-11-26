@@ -1,10 +1,11 @@
 [theme]
 base = "dark"
-primaryColor = "#6fd9c4"  # = --accent in app.py THEME_CSS
-backgroundColor = "#06150f"
-secondaryBackgroundColor = "#0c241c"
-textColor = "#dbe9e2"
-font = "sans serif"
+primaryColor = "#C8F25A"  # = --accent in app.py THEME_CSS
+backgroundColor = "#0B0E13"
+secondaryBackgroundColor = "#151A21"
+textColor = "#EEF2F6"
+borderColor = "#232A33"
+font = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
 baseRadius = "large"
 
 [client]

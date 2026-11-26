@@ -98,7 +98,10 @@ def test_backup_includes_rows_still_in_the_wal_file(tmp_path):
         main_only = tmp_path / "main_only.db"
         shutil.copyfile(core.DB_PATH, main_only)
         with closing(sqlite3.connect(main_only)) as conn:
-            assert conn.execute("SELECT COUNT(*) FROM expenses").fetchone()[0] < 51
+            try:
+                assert conn.execute("SELECT COUNT(*) FROM expenses").fetchone()[0] < 51
+            except sqlite3.OperationalError:  # newer SQLite: even the table is only in -wal
+                pass
 
         out_dir = tmp_path / "out"
         out_dir.mkdir()

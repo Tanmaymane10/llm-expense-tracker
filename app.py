@@ -38,153 +38,156 @@ from core import (
 
 THEME_CSS = """
 <style>
+/* Tokens: docs/design/DESIGN-SPEC.md. Accent is the only accent. */
 :root {
-  --bg-0: #06150f;
-  --bg-1: #0c241c;
-  --glass: rgba(255, 255, 255, 0.045);
-  --glass-strong: rgba(255, 255, 255, 0.07);
-  --edge: rgba(255, 255, 255, 0.09);
-  --accent: #6fd9c4;
-  --accent-soft: rgba(111, 217, 196, 0.14);
-  --mint: var(--accent);  /* old name kept so every rule reads the one accent */
-  --text: #dbe9e2;
-  --muted: #8aa89c;
-  --radius: 14px;
-  --pad: 0.85rem 1rem;
+  --bg: #0B0E13;
+  --surface: #151A21;
+  --surface-2: #1C222B;
+  --inset: #0F1318;
+  --border: #232A33;
+  --border-2: #2A323D;
+  --text: #EEF2F6;
+  --muted: #8C97A6;
+  --accent: #C8F25A;
+  --on-accent: #0B0E13;
+  --warn: #F5B84B;
+  --warn-ink: #F7C873;
+  --danger: #FF7A7A;
+  --danger-ink: #FF9A9A;
+  --credit: #9BE88A;
 }
-.stApp {
-  background:
-    radial-gradient(900px 520px at 10% -10%, rgba(111, 217, 196, 0.08), transparent 65%),
-    linear-gradient(165deg, var(--bg-1), var(--bg-0) 75%);
-  color: var(--text);
-}
+.stApp { background: var(--bg); color: var(--text); }
 [data-testid="stHeader"] { background: transparent; }
-h1, h2, h3, h4, label, p, span, div { color: var(--text); }
-h1 { letter-spacing: 0.04em; font-weight: 700; }
-h2, h3 { font-weight: 600; }
-[data-testid="stCaptionContainer"], .stCaption { color: var(--muted) !important; }
-
-/* glass cards */
-[data-testid="stMetric"], [data-testid="stDataFrame"],
-[data-testid="stChatMessage"], [data-testid="stAlert"],
-[data-testid="stForm"] {
-  box-sizing: border-box;
-  max-width: 100%;
-  background: var(--glass);
-  border: 1px solid var(--edge);
-  border-radius: var(--radius);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  padding: var(--pad);
+/* one centered column, also on desktop; room at the bottom for the fixed nav */
+[data-testid="stMainBlockContainer"] {
+  max-width: 560px;
+  padding: 22px 20px 132px;
 }
-[data-testid="stMetricValue"] { color: var(--text); font-weight: 600; }
-[data-testid="stMetricLabel"] p { color: var(--muted); }
-[data-testid="stDataFrame"] { padding: 0.35rem; overflow: hidden; }
-/* the alert draws its own coloured box; the glass card is just its frame */
-[data-testid="stAlert"] { padding: 0; overflow: hidden; }
-[data-testid="stAlert"] > div { border-radius: var(--radius); }
+[data-testid="stMetricValue"], .num { font-variant-numeric: tabular-nums; }
+h1 { font-size: 26px; font-weight: 700; letter-spacing: 0; }
+h2, h3 { font-size: 17px !important; font-weight: 600 !important; }
+[data-testid="stCaptionContainer"],
+[data-testid="stCaptionContainer"] p {
+  color: var(--muted) !important;
+}
+a { color: var(--accent); }
 
-/* chart cards */
+/* cards */
+[data-testid="stForm"], [data-testid="stChatMessage"], [data-testid="stMetric"],
+[data-testid="stExpander"] details, [data-testid="stDataFrame"],
 [data-testid="stVegaLiteChart"], [data-testid="stArrowVegaLiteChart"] {
-  box-sizing: border-box;
-  max-width: 100%;
-  background: var(--glass);
-  border: 1px solid var(--edge);
-  border-radius: var(--radius);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  padding: var(--pad);
-  padding-bottom: 0.4rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+}
+[data-testid="stForm"], [data-testid="stChatMessage"] { padding: 14px 16px; }
+[data-testid="stMetric"] {
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: var(--surface-2);
+  border: 0;
+}
+[data-testid="stMetricLabel"] p { color: var(--muted); font-size: 12px; }
+[data-testid="stMetricValue"] { font-size: 22px; font-weight: 700; }
+[data-testid="stDataFrame"] { padding: 4px; overflow: hidden; }
+[data-testid="stVegaLiteChart"],
+[data-testid="stArrowVegaLiteChart"] {
+  padding: 14px 12px 6px;
   overflow: hidden;
 }
 
-/* tabs as pills */
-.stTabs [data-baseweb="tab-list"],
-.stTabs [role="tablist"] {
-  gap: 0.5rem !important;
-  border-bottom: none !important;
-  box-shadow: none !important;
-  padding: 0.25rem 0 0.75rem 0 !important;
-}
-.stTabs [data-baseweb="tab-border"],
-.stTabs [data-baseweb="tab-highlight"] {
-  display: none !important;
-  background: transparent !important;
-  height: 0 !important;
-}
-.stTabs button[role="tab"],
-.stTabs [data-baseweb="tab"] {
-  background: var(--glass) !important;
-  border: 1px solid var(--edge) !important;
-  border-radius: 999px !important;
-  padding: 0.45rem 1.25rem !important;
-  height: auto !important;
-  min-height: 0 !important;
-  margin: 0 !important;
-  color: var(--muted) !important;
-  transition: background 0.15s ease, border-color 0.15s ease;
-}
-.stTabs button[role="tab"] p,
-.stTabs [data-baseweb="tab"] p { color: inherit !important; margin: 0 !important; }
-.stTabs button[role="tab"]:hover { border-color: var(--mint) !important; }
-.stTabs button[role="tab"][aria-selected="true"] {
-  background: var(--accent-soft) !important;
-  border: 1px solid var(--mint) !important;
-  color: var(--mint) !important;
+/* buttons: secondary = surface pill, primary = lime */
+.stButton > button, .stDownloadButton > button, .stFormSubmitButton > button {
+  min-height: 44px;
+  border-radius: 999px;
+  border: 1px solid var(--border-2);
+  background: var(--surface-2);
+  color: var(--text);
   font-weight: 600;
 }
-
-/* period radio as pills */
-div[role="radiogroup"] { gap: 0.4rem; flex-wrap: wrap; }
-div[role="radiogroup"] label {
-  background: var(--glass);
-  border: 1px solid var(--edge);
-  border-radius: 999px;
-  padding: 0.2rem 0.9rem;
+.stButton > button:hover, .stDownloadButton > button:hover, .stFormSubmitButton > button:hover {
+  border-color: var(--accent);
+  color: var(--text);
 }
-
-/* inputs and buttons */
-[data-testid="stChatInput"] {
-  background: var(--glass-strong);
-  border: 1px solid var(--edge);
-  border-radius: var(--radius);
+[data-testid="stBaseButton-primary"], [data-testid="stBaseButton-primaryFormSubmit"] {
+  background: var(--accent) !important;
+  border-color: var(--accent) !important;
+  color: var(--on-accent) !important;
 }
-.stButton > button, .stDownloadButton > button,
-[data-testid="stBaseButton-secondary"], [data-testid="stBaseButton-primary"] {
-  background: var(--accent-soft) !important;
-  border: 1px solid var(--mint) !important;
-  border-radius: 999px !important;
-  padding: 0.5rem 1.4rem !important;
-  color: var(--mint) !important;
-  font-weight: 600 !important;
-  transition: background 0.15s ease, color 0.15s ease;
-}
-.stButton > button *, .stDownloadButton > button *,
-[data-testid="stBaseButton-secondary"] *, [data-testid="stBaseButton-primary"] * {
+[data-testid="stBaseButton-primary"] *,
+[data-testid="stBaseButton-primaryFormSubmit"] * {
   color: inherit !important;
-  font-weight: inherit !important;
 }
-.stButton > button:hover, .stDownloadButton > button:hover,
-[data-testid="stBaseButton-secondary"]:hover, [data-testid="stBaseButton-primary"]:hover {
-  background: rgba(111, 217, 196, 0.26) !important;
-  color: var(--text) !important;
-}
-.stButton > button:focus-visible, .stDownloadButton > button:focus-visible {
-  outline: 2px solid var(--accent) !important;
-  outline-offset: 2px;
-}
-hr { border-color: var(--edge); }
+button:focus-visible { outline: 2px solid var(--accent) !important; outline-offset: 2px; }
 
-@media (max-width: 640px) {
-  .block-container { padding: 1rem 0.8rem; }
+/* inputs: wells */
+[data-baseweb="input"], [data-baseweb="select"] > div, [data-baseweb="textarea"],
+[data-testid="stChatInput"] > div {
+  background: var(--inset) !important;
+  border-color: var(--border-2) !important;
+  border-radius: 14px !important;
+}
+hr { border-color: var(--border); }
+
+/* bottom nav: fixed bar. Fallback: delete this rule and the bar is a normal row. */
+.st-key-bottomnav {
+  position: fixed;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  width: min(536px, calc(100% - 24px));
+  height: 72px;
+  z-index: 999990;
+  background: rgba(21, 26, 33, 0.94);
+  border: 1px solid #262D37;
+  border-radius: 24px;
+  padding: 0 4px;
+  flex-wrap: nowrap !important;
+}
+.st-key-bottomnav button {
+  flex-direction: column;
+  gap: 3px;
+  min-width: 52px;
+  min-height: 56px;
+  padding: 4px 6px !important;
+  border: 0 !important;
+  background: transparent !important;
+  color: var(--muted) !important;
+  box-shadow: none !important;
+}
+.st-key-bottomnav button span[data-has-shortcut] {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+}
+.st-key-bottomnav button p { font-size: 11px !important; font-weight: 500; margin: 0; }
+.st-key-bottomnav button span[data-testid="stIconMaterial"] { font-size: 22px; }
+.st-key-bottomnav [data-testid="stBaseButton-primary"] { color: var(--accent) !important; }
+.st-key-nav_add button {
+  width: 56px; height: 56px; min-height: 56px; border-radius: 50% !important;
+  margin-top: -26px;
+  background: var(--accent) !important;
+  color: var(--on-accent) !important;
+  box-shadow: 0 8px 24px rgba(200, 242, 90, 0.28) !important;
+}
+/* the label stays for screen readers only */
+.st-key-nav_add button p {
+  position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0);
+}
+.st-key-nav_add span[data-testid="stIconMaterial"] { font-size: 26px; }
+/* on phones, the keyboard owns the bottom of the screen while typing */
+@media (pointer: coarse) {
+  body:has(textarea:focus, input:focus) .st-key-bottomnav { display: none; }
 }
 </style>
 """
 
 
-# ---- chart helpers: transparent background, soft grid, the THEME_CSS accent
-ACCENT, ACCENT_SOFT = "#6fd9c4", "rgba(111,217,196,0.45)"  # = --accent in THEME_CSS
-MUTED, GRID = "#8aa89c", "rgba(255,255,255,0.07)"
+# ---- chart helpers: transparent background, no grid clutter, the THEME_CSS tokens
+ACCENT, ACCENT_SOFT = "#C8F25A", "rgba(200,242,90,0.45)"  # = --accent in THEME_CSS
+MUTED, GRID = "#8C97A6", "rgba(255,255,255,0.05)"
+WARN, DANGER = "#F5B84B", "#FF7A7A"
 
 
 def _style(chart):
@@ -249,7 +252,7 @@ def budget_chart(df: pd.DataFrame):
     bars = alt.Chart(data).mark_bar(cornerRadiusEnd=6, size=18).encode(
         x=x, y=y,
         color=alt.Color("state:N", legend=None, scale=alt.Scale(
-            domain=["ok", "warn", "over"], range=[ACCENT, "#fbbf24", "#f87171"])),
+            domain=["ok", "warn", "over"], range=[ACCENT, WARN, DANGER])),
         tooltip=["label", alt.Tooltip("spent:Q", format=",.0f", title="Spent (₹)"),
                  alt.Tooltip("budget:Q", format=",.0f", title="Budget (₹)"),
                  alt.Tooltip("pct:Q", format=".0f", title="% used")])
@@ -898,20 +901,43 @@ def render_llm_usage():
         st.dataframe(errors, hide_index=True, width="stretch")
 
 
-st.set_page_config(page_title="QORVIAN", layout="wide")
+# Nav order; None is the raised "+" in the middle. Material Symbols are line icons, not emoji.
+NAV = [("Home", ":material/home:"), ("Analytics", ":material/bar_chart:"), None,
+       ("Plan", ":material/calendar_month:"), ("Usage", ":material/memory:")]
+
+
+def _go(view: str):
+    st.session_state.view = view
+
+
+def render_nav():
+    """Fixed bottom bar (CSS on .st-key-bottomnav). Without that CSS it is a plain row."""
+    active = {"All": "Home"}.get(st.session_state.view, st.session_state.view)
+    with st.container(key="bottomnav", horizontal=True, horizontal_alignment="distribute",
+                      vertical_alignment="center", gap=None):
+        for entry in NAV:
+            if entry is None:
+                st.button("Add expense", icon=":material/add:", key="nav_add",
+                          on_click=_go, args=("Home",))
+                continue
+            name, icon = entry
+            st.button(name, icon=icon, key=f"nav_{name}", on_click=_go, args=(name,),
+                      type="primary" if name == active else "tertiary")
+
+
+st.set_page_config(page_title="QORVIAN", layout="centered")
 st.markdown(THEME_CSS, unsafe_allow_html=True)
 require_pin()
 init_db()
 if post_due_recurring():
     st.cache_data.clear()
-st.title("QORVIAN")
 for _card in read("card_status"):
     if _line := due_line(_card, date.today()):
         st.warning(_line)
 
 # Only the selected view runs, so a chat message no longer rebuilds every chart.
-VIEWS = {"Chat": render_chat, "Analytics": render_analytics, "Plan": render_plan,
-         "LLM usage": render_llm_usage}
-view = st.segmented_control("View", list(VIEWS), default="Chat", required=True, key="view",
-                            label_visibility="collapsed")
-VIEWS[view]()
+VIEWS = {"Home": render_chat, "Analytics": render_analytics, "Plan": render_plan,
+         "Usage": render_llm_usage}
+st.session_state.setdefault("view", "Home")
+render_nav()
+VIEWS.get(st.session_state.view, render_chat)()

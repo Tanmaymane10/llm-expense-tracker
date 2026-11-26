@@ -183,7 +183,7 @@ def test_usage_view_counts_backup_calls(models, monkeypatch):
     df = an.load_llm_calls()
     assert list(df["model"]) == [MAIN, BACKUP]
     monkeypatch.setattr(core.time, "sleep", REAL_SLEEP)
-    at = run_app("LLM usage")
+    at = run_app("Usage")
     assert _widget(at.metric, "Backup model calls").value == "1"
 
 
@@ -193,7 +193,7 @@ def test_usage_view_shows_no_backup_calls_when_backup_is_the_main_model(models, 
     monkeypatch.setattr(core, "FALLBACK_MODEL", MAIN)
     turn("chai 15")
     monkeypatch.setattr(core.time, "sleep", REAL_SLEEP)
-    assert _widget(run_app("LLM usage").metric, "Backup model calls").value == "0"
+    assert _widget(run_app("Usage").metric, "Backup model calls").value == "0"
 
 
 def test_local_and_quick_add_rows_log_no_model():

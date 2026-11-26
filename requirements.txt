@@ -1,2 +1,2 @@
 google-genai>=1.50
-streamlit>=1.65
+streamlit==1.67.0

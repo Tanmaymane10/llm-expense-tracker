@@ -9,42 +9,48 @@ from streamlit.testing.v1 import AppTest
 APP = str(Path(__file__).resolve().parent.parent / "app.py")
 
 
-VIEWS = ["Chat", "Analytics", "Plan", "LLM usage"]
+VIEWS = ["Home", "Analytics", "Plan", "Usage"]
 
 
-def run_app(view="Chat"):
+def run_app(view="Home"):
     at = AppTest.from_file(APP, default_timeout=60)
     at.session_state["authed"] = True
     at.run()
-    return go(at, view) if view != "Chat" else at
+    return go(at, view) if view != "Home" else at
 
 
 def go(at, view):
-    nav(at).set_value(view).run()
+    at.button(key=f"nav_{view}").click().run()
     return at
 
 
-def nav(at):
-    return at.button_group[0]
+def nav_keys(at):
+    return [b.key for b in at.button if b.key and b.key.startswith("nav_")]
+
+
+def active_view(at):
+    return [b.label for b in at.button if b.key and b.key.startswith("nav_")
+            and b.proto.type == "primary"]
 
 def test_pin_gate_blocks_until_correct(monkeypatch):
     monkeypatch.setenv("APP_PIN", "123456")
     at = AppTest.from_file(APP, default_timeout=60).run()
-    assert not at.button_group  # nothing from the app is rendered
+    assert not nav_keys(at)  # nothing from the app is rendered
     at.text_input[0].set_value("000000")
     at.button[0].click().run()
-    assert not at.button_group
+    assert not nav_keys(at)
     at.text_input[0].set_value("123456")
     at.button[0].click().run()
-    assert nav(at).options == VIEWS and nav(at).value == "Chat"
+    assert active_view(at) == ["Home"]
 
 
 def test_app_loads_with_empty_database():
     at = run_app()
     assert not at.exception
-    assert nav(at).options == VIEWS and nav(at).value == "Chat"
+    assert nav_keys(at) == ["nav_Home", "nav_Analytics", "nav_add", "nav_Plan", "nav_Usage"]
+    assert active_view(at) == ["Home"]
     for view in VIEWS:
-        assert not go(at, view).exception
+        assert not go(at, view).exception and active_view(at) == [view]
 
 
 @pytest.mark.parametrize("period", ["This month", "Last 30 days", "Last 90 days",
@@ -68,7 +74,7 @@ def test_llm_usage_tab_renders_with_recorded_calls():
     started = time.perf_counter()
     core._log_llm_call("chat", "ok", started, 1, resp=FakeResp([("add_expenses", {})], usage()))
     core._log_llm_call("chat", "error", started, 2, error="ConnectionError")
-    at = run_app("LLM usage")
+    at = run_app("Usage")
     assert not at.exception
     labels = [m.label for m in at.metric]
     assert "Calls today" in labels and "Success rate" in labels
@@ -134,7 +140,7 @@ def test_plan_remove_card_and_auto_tag():
     _widget(at.selectbox, "Card").set_value("(remove card)")
     _widget(at.button, "Save subscription").click().run()
     assert query("SELECT card_id, payment_method FROM recurring") == [(None, None)]
-    recent = go(at, "Chat").dataframe[0].value  # the editable recent-entries table
+    recent = go(at, "Home").dataframe[0].value  # the editable recent-entries table
     assert list(recent["item"]) == ["netflix"] and list(recent["auto"]) == [True]
 
 
@@ -174,10 +180,10 @@ def test_chat_save_clears_the_cache_so_analytics_is_fresh(monkeypatch):
 
     assert total() == "₹15"
     insert_expense("auto", 80, "transport", f"{date.today()} 10:00")  # cached: not seen yet
-    assert go(at, "Chat") and go(at, "Analytics") and total() == "₹15"
+    assert go(at, "Home") and go(at, "Analytics") and total() == "₹15"
 
     monkeypatch.setattr(core, "chat_turn", lambda history, text, key: "Saved")
-    go(at, "Chat").chat_input[0].set_value("auto 80").run()
+    go(at, "Home").chat_input[0].set_value("auto 80").run()
     assert go(at, "Analytics") and total() == "₹95"
 
 
@@ -201,6 +207,6 @@ def test_analytics_period_survives_a_view_switch():
     at.radio[0].set_value("Custom").run()
     picked = (date.today() - timedelta(days=5), date.today())
     at.date_input[0].set_value(picked).run()
-    go(go(at, "Chat"), "Analytics")
+    go(go(at, "Home"), "Analytics")
     assert at.radio[0].value == "Custom" and tuple(at.date_input[0].value) == picked
     assert not at.exception
