@@ -92,3 +92,66 @@ def test_tool_schemas_are_built_once(monkeypatch):
     core._generate([])
     names = [f.name for f in seen[0]["config"].tools[0].function_declarations]
     assert names == [t["name"] for t in core.TOOLS]
+
+
+def _flaky(monkeypatch, errors):
+    """Model raising each of `errors` in turn, then answering. Returns (sleeps, hook texts)."""
+    queue, sleeps, notes = list(errors), [], []
+
+    def call(**kw):
+        if queue:
+            raise queue.pop(0)
+        return FakeResp([("out_of_scope", {})])
+    monkeypatch.setattr(core, "_client", fake_client(call))
+    monkeypatch.setattr(core.time, "sleep", sleeps.append)
+    monkeypatch.setattr(core, "_thinking_idx", 0)
+    token = core.status_hook.set(notes.append)
+    return sleeps, notes, token
+
+
+def busy():
+    return genai_errors.ServerError(503, {"error": {"message": "overloaded"}})
+
+
+def test_retries_wait_2_then_4_seconds_and_report_progress(monkeypatch):
+    sleeps, notes, token = _flaky(monkeypatch, [busy(), busy()])
+    try:
+        core._generate([])
+    finally:
+        core.status_hook.reset(token)
+    assert sleeps == [2, 4]
+    assert notes == ["Gemini is busy, retrying (2/3)...", "Gemini is busy, retrying (3/3)..."]
+    assert query("SELECT status, attempts FROM llm_calls") == [("ok", 3)]
+
+
+def test_three_busy_errors_give_up_after_three_attempts(monkeypatch):
+    sleeps, _, token = _flaky(monkeypatch, [busy(), busy(), busy(), busy()])
+    try:
+        with pytest.raises(genai_errors.ServerError):
+            core._generate([])
+    finally:
+        core.status_hook.reset(token)
+    assert sleeps == [2, 4]
+    assert query("SELECT status, attempts FROM llm_calls") == [("error", 3)]
+
+
+def test_thinking_fallback_does_not_use_up_a_retry(monkeypatch):
+    think = genai_errors.ClientError(400, {"error": {"message": "thinking_level not supported"}})
+    sleeps, _, token = _flaky(monkeypatch, [think, think, busy(), busy()])
+    try:
+        core._generate([])
+    finally:
+        core.status_hook.reset(token)
+    assert core._thinking_idx == 2 and sleeps == [2, 4]  # both bumps, then the full 3 attempts
+    assert query("SELECT status, attempts FROM llm_calls") == [("ok", 3)]
+
+
+def test_thinking_fallback_is_bounded_by_the_configs(monkeypatch):
+    think = genai_errors.ClientError(400, {"error": {"message": "thinking not supported"}})
+    sleeps, _, token = _flaky(monkeypatch, [think] * 10)
+    try:
+        with pytest.raises(genai_errors.ClientError):  # last config rejected too: plain error
+            core._generate([])
+    finally:
+        core.status_hook.reset(token)
+    assert core._thinking_idx == len(core._thinking_candidates()) - 1 and sleeps == []

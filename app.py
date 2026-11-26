@@ -494,11 +494,16 @@ def render_chat():
         prompt = st.chat_input("e.g. bought vada pav for 30 and auto for 120",
                                max_chars=MAX_INPUT_CHARS)
         if prompt:
-            with st.spinner("Working on it..."):
+            slot = st.empty()  # removed after the reply, like the old spinner
+            with slot.status("Working on it...") as box:
+                token = core.status_hook.set(lambda text: box.update(label=text))
                 try:
                     reply = chat_turn(st.session_state.history, prompt, st.session_state.sid)
                 except Exception:  # model or network failure: show a clean message, not a trace
                     reply = "The AI service is unavailable right now. Please try again shortly."
+                finally:
+                    core.status_hook.reset(token)
+            slot.empty()
             st.session_state.history += [
                 {"role": "user", "content": prompt},
                 {"role": "assistant", "content": reply},

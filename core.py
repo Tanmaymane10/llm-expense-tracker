@@ -15,6 +15,7 @@ import sqlite3
 import time
 from calendar import monthrange
 from collections import defaultdict, deque
+from contextvars import ContextVar
 from datetime import date, datetime, timedelta
 
 import pandas as pd
@@ -1396,6 +1397,11 @@ _GEMINI_TOOLS = [types.Tool(function_declarations=[
                               parameters_json_schema=t["parameters"])
     for t in TOOLS])]
 _thinking_idx = 0  # index of the first thinking setting this model accepted
+MAX_ATTEMPTS = 3      # model calls per request for 429/503; thinking fallbacks don't count
+RETRY_WAITS = (2, 4)  # seconds before attempt 2 and 3: worst case ~6 s, not ~45 s
+# Optional callback(text) for progress, e.g. the Streamlit status box. A ContextVar, so each
+# Streamlit session thread has its own and no function signature changes.
+status_hook: ContextVar = ContextVar("status_hook", default=None)
 
 
 def _thinking_candidates() -> list:
@@ -1441,7 +1447,8 @@ def _generate(contents: list, now: datetime = None, purpose: str = "chat"):
     candidates = _thinking_candidates()
     prompt = system_prompt(now)  # once per call, not per retry (it reads the card list)
     started = time.perf_counter()
-    for attempt in range(1, 7):
+    attempt = 1
+    while True:  # ends: attempt is capped, and _thinking_idx can only grow to len - 1
         config = types.GenerateContentConfig(
             system_instruction=prompt,
             tools=_GEMINI_TOOLS,
@@ -1459,16 +1466,19 @@ def _generate(contents: list, now: datetime = None, purpose: str = "chat"):
             # Model rejected this thinking setting -> try the next one.
             if code == 400 and "think" in str(exc).lower() and _thinking_idx < len(candidates) - 1:
                 _thinking_idx += 1
-                continue
+                continue  # not a retry, so attempt is unchanged
             if code == 429 and "perday" in str(exc).lower():
                 _log_llm_call(purpose, "quota_daily", started, attempt, error="429 daily quota")
                 raise DailyQuotaExceeded(
                     "Gemini free-tier DAILY quota used up for this model. It resets within a "
                     "day, or set EXPENSE_MODEL to a model with a higher daily limit.") from exc
-            if code in (429, 503) and attempt < 6:
-                wait = 3 * attempt
+            if code in (429, 503) and attempt < MAX_ATTEMPTS:
+                wait = RETRY_WAITS[attempt - 1]
                 print(f"[llm] error {code}, retrying in {wait}s")
+                if hook := status_hook.get():
+                    hook(f"Gemini is busy, retrying ({attempt + 1}/{MAX_ATTEMPTS})...")
                 time.sleep(wait)
+                attempt += 1
                 continue
             _log_llm_call(purpose, "error", started, attempt, error=f"{type(exc).__name__} {code}")
             raise
@@ -1478,8 +1488,6 @@ def _generate(contents: list, now: datetime = None, purpose: str = "chat"):
         _log_llm_call(purpose, "ok", started, attempt, resp=resp)
         print(f"[llm] {MODEL} responded in {time.perf_counter() - started:.1f}s")
         return resp
-    _log_llm_call(purpose, "error", started, 6, error="retries exhausted")
-    raise RuntimeError("Gemini call failed after retries.")
 
 
 # Their results are shown to the user as-is, so these need only ONE model call.
