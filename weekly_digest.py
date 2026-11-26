@@ -1,5 +1,6 @@
 """
-Weekly Telegram digest: last 7 days of spending vs the 7 before, budgets at risk, month pace.
+Weekly Telegram digest: last 7 days of spending vs the 7 before, day-to-day vs the target and
+limit, budgets at risk, month pace. Invested money is listed apart, never as spent.
 
     python weekly_digest.py             # send (TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID in .env)
     python weekly_digest.py --dry-run   # print the message instead of sending
@@ -23,22 +24,27 @@ def build_message(today: date = None) -> str:
         return "No expenses logged yet."
 
     start, prev_end = today - timedelta(days=6), today - timedelta(days=7)
-    cur = an.filter_range(df, start, today)
+    week = an.filter_range(df, start, today)
+    cur = week[week["grp"] != "invested"]  # invested money is saved, not spent
     prev = an.filter_range(df, today - timedelta(days=13), prev_end)
     k = an.kpis(cur, start, today)
-    prev_total = float(prev["amount_inr"].sum())
+    prev_total = float(prev.loc[prev["grp"] != "invested", "amount_inr"].sum())
+    purchases = int((cur["amount_inr"] > 0).sum())  # refunds are not purchases
 
     lines = [
         f"Week {start:%d %b} to {today:%d %b}",
-        f"Spent {core.inr(k['total'])} in {k['transactions']} purchases "
+        f"Spent {core.inr(k['total'])} in {purchases} purchases "
         f"({core.inr(round(k['avg_per_day']))}/day)",
     ]
+    invested = float(week.loc[week["grp"] == "invested", "amount_inr"].sum())
+    if invested:
+        lines.append(f"Invested {core.inr(invested)} (not counted as spent)")
     if prev_total:
         d = k["total"] - prev_total
         word = "Up" if d > 0 else "Down"
         pct = 100 * d / prev_total
         lines.append(f"{word} {core.inr(abs(d))} ({pct:+.0f}%) vs the week before")
-    if k["transactions"]:
+    if len(cur):
         lines.append(f"Top category: {k['top_category']} ({core.inr(k['top_category_amount'])})")
         big = an.biggest_expenses(cur, 1)
         if not big.empty:
@@ -50,6 +56,10 @@ def build_message(today: date = None) -> str:
         if len(rows) > 60:
             lines.append(f"...and {len(rows) - 60} more")
         lines.append(f"Total: {core.inr(k['total'])}")
+
+    f = core.month_figures(today)
+    lines += ["", f"Day-to-day this month: {core.inr(f['d2d'])} of {core.inr(f['target'])}"
+              f"–{core.inr(f['limit'])} ({f['status']})"]
 
     risky = [b for b in core.budget_status(today) if b["pct"] >= 80]
     if risky:
