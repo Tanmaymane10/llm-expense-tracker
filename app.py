@@ -185,7 +185,7 @@ hr { border-color: var(--border); }
   min-width: 0;
   max-width: 100%;
   min-height: 56px;
-  padding: 4px 6px !important;
+  padding: 4px 2px !important;
   border: 0 !important;
   background: transparent !important;
   color: var(--muted) !important;
@@ -197,7 +197,10 @@ hr { border-color: var(--border); }
   align-items: center;
   gap: 3px;
 }
-.st-key-bottomnav button p { font-size: 11px !important; font-weight: 500; margin: 0; }
+.st-key-bottomnav button p {
+  font-size: 11px !important; font-weight: 500; margin: 0;
+  white-space: nowrap; overflow: visible; text-overflow: clip;
+}
 .st-key-bottomnav button span[data-testid="stIconMaterial"] { font-size: 22px; }
 .st-key-bottomnav [data-testid="stBaseButton-primary"] { color: var(--accent) !important; }
 /* Home card rows: the "Set billing dates" button overlays the row's due slot */
@@ -211,11 +214,12 @@ hr { border-color: var(--border); }
 }
 [class*="st-key-carddates_"] button p { font-size: 12px !important; }
 .st-key-nav_add button {
-  width: 56px; height: 56px; min-height: 56px; border-radius: 50% !important;
-  margin-top: -26px;
+  /* inside the bar: 48px in a 72px bar leaves 12px each side, enough for an 8px glow */
+  width: 48px; height: 48px; min-height: 48px; border-radius: 50% !important;
+  padding: 0 !important;
   background: var(--accent) !important;
   color: var(--on-accent) !important;
-  box-shadow: 0 8px 24px rgba(200, 242, 90, 0.28) !important;
+  box-shadow: 0 0 8px rgba(200, 242, 90, 0.28) !important;
 }
 /* Home header: lock button as a 44px circle */
 .st-key-lock button {
