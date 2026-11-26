@@ -265,10 +265,15 @@ def budget_chart(df: pd.DataFrame):
 # entries. Every UI write clears the cache.
 def _recent_rows() -> pd.DataFrame:
     with get_conn() as conn:
-        return pd.read_sql_query(
-            "SELECT id, spent_at, item || CASE WHEN recurring_id IS NOT NULL "
-            "THEN ' (auto)' ELSE '' END AS item, amount_inr, category FROM expenses "
-            "ORDER BY id DESC LIMIT 50", conn)
+        df = pd.read_sql_query(
+            "SELECT e.id, e.spent_at, e.item, e.amount_inr, e.category, e.payment_method, "
+            "c.card_name, e.recurring_id IS NOT NULL AS auto FROM expenses e "
+            "LEFT JOIN credit_cards c ON c.id = e.card_id ORDER BY e.id DESC LIMIT 50", conn)
+    df["payment"] = [core.payment_label(m, c) for m, c in
+                     zip(df.pop("payment_method"), df.pop("card_name"), strict=True)]
+    df["spent_at"] = pd.to_datetime(df["spent_at"], errors="coerce")
+    df["auto"] = df["auto"].astype(bool)
+    return df[["id", "spent_at", "item", "amount_inr", "category", "payment", "auto"]]
 
 
 _READS = {
@@ -600,12 +605,71 @@ def render_chat():
                     st.write(m["content"])
 
     with data_col:
-        recent = read("recent")
-        if recent.empty:
-            st.info("No expenses yet.")
-        else:
-            st.caption("Last 50 entries logged")
-            st.dataframe(recent, width="stretch", hide_index=True)
+        render_recent()
+
+
+def render_recent():
+    """Last 50 entries, editable in place. Every write uses core's validation; no model call."""
+    recent = read("recent")
+    if recent.empty:
+        st.info("No expenses yet.")
+        return
+    st.caption("Last 50 entries. Edit a cell and save, or tick rows to delete.")
+    v = st.session_state.get("editor_v", 0)  # bumped after a write so old edits don't linger
+    ids = recent["id"].astype(int).tolist()
+    # edits are stored by row position: new ids (any save, Undo, Telegram) must start fresh
+    key = f"recent_{v}_{hash(tuple(ids))}"
+    edited = st.data_editor(
+        recent.assign(delete=False), key=key, hide_index=True, width="stretch",
+        num_rows="fixed", disabled=["id", "auto"],
+        column_config={
+            "id": "Id",
+            "spent_at": st.column_config.DatetimeColumn("Time", format="YYYY-MM-DD HH:mm",
+                                                        required=True),
+            "item": st.column_config.TextColumn("Item", max_chars=80, required=True),
+            "amount_inr": st.column_config.NumberColumn("Amount (Rs)", required=True),
+            "category": st.column_config.SelectboxColumn("Category", options=CATEGORIES,
+                                                         required=True),
+            "payment": st.column_config.SelectboxColumn(
+                "Paid with", options=list(read("payment_options"))),
+            "auto": st.column_config.CheckboxColumn("Auto", help="Posted by a subscription"),
+            "delete": st.column_config.CheckboxColumn("Delete"),
+        })
+    changes = {ids[int(i)]: {k: val for k, val in ch.items() if k != "delete"}
+               for i, ch in st.session_state[key]["edited_rows"].items()}
+    changes = {i: ch for i, ch in changes.items() if ch}
+    picked = edited.loc[edited["delete"], "id"].astype(int).tolist()
+
+    c1, c2 = st.columns(2)
+    if changes and c1.button(f"Save {len(changes)} change(s)"):
+        st.session_state.pop("undo", None)
+        errors = core.apply_edits(changes)
+        if not errors:
+            st.session_state.editor_v = v + 1
+            _after_write(f"Saved {len(changes)} change(s).")
+        st.cache_data.clear()  # valid rows were saved; the bad ones stay in the editor
+        items = dict(zip(ids, recent["item"], strict=True))
+        for eid, err in errors.items():
+            st.error(f"#{eid} {items[eid]}: {err} Not saved.")
+    if picked and c2.button(f"Delete {len(picked)} selected"):
+        st.session_state.confirm_delete = picked
+    pending = [i for i in st.session_state.get("confirm_delete", []) if i in ids]
+    if pending:
+        items = recent.set_index("id").loc[pending, "item"]
+        st.warning(f"Delete {', '.join(f'#{i} {n}' for i, n in items.items())}? "
+                   "This cannot be undone.")
+        yes, no = st.columns(2)
+        if yes.button("Yes, delete", type="primary", key="yes_delete_expenses"):
+            for i in pending:
+                core.delete_expense(i)
+            del st.session_state.confirm_delete
+            st.session_state.pop("undo", None)
+            st.session_state.editor_v = v + 1
+            _after_write(f"Deleted {len(pending)} entr{'y' if len(pending) == 1 else 'ies'}.")
+        if no.button("Cancel", key="cancel_delete_expenses"):
+            del st.session_state.confirm_delete
+            st.session_state.editor_v = v + 1  # untick the boxes
+            st.rerun()
 
 
 def render_analytics():

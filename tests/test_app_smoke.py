@@ -134,8 +134,8 @@ def test_plan_remove_card_and_auto_tag():
     _widget(at.selectbox, "Card").set_value("(remove card)")
     _widget(at.button, "Save subscription").click().run()
     assert query("SELECT card_id, payment_method FROM recurring") == [(None, None)]
-    recent = go(at, "Chat").dataframe[0].value
-    assert list(recent["item"]) == ["netflix (auto)"]
+    recent = go(at, "Chat").dataframe[0].value  # the editable recent-entries table
+    assert list(recent["item"]) == ["netflix"] and list(recent["auto"]) == [True]
 
 
 def test_chat_input_is_on_top_and_newest_exchange_comes_first(monkeypatch):

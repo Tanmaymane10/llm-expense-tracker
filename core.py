@@ -933,6 +933,8 @@ def _recent_df(limit: int = 10, search: str = None) -> pd.DataFrame:
 
 
 def update_expense(expense_id: int, **fields) -> str:
+    """Change the given fields; None means unchanged. payment_method="" clears the method
+    and card back to unknown (the Chat editor only; the model's tool has no payment fields)."""
     updates = {}  # column names below are fixed strings, so the f-string SQL is safe
     if fields.get("spent_at") is not None:
         updates["spent_at"] = _parse_when(fields["spent_at"])
@@ -942,18 +944,58 @@ def update_expense(expense_id: int, **fields) -> str:
         updates["amount_inr"] = _check_amount(fields["amount_inr"])
     if fields.get("category") is not None:
         updates["category"] = _check_category(fields["category"])
-    if not updates:
+    method, card = fields.get("payment_method"), fields.get("card_name")
+    if not updates and method is None and not card:
         return "Nothing to update."
-    sets = ", ".join(f"{k} = ?" for k in updates)
     with get_conn() as conn:
+        if method == "":
+            updates["payment_method"] = updates["card_id"] = None
+        elif method is not None or card:
+            updates["payment_method"], updates["card_id"], _ = _resolve_card(conn, card, method)
         old = conn.execute("SELECT amount_inr FROM expenses WHERE id = ?",
                            (int(expense_id),)).fetchone()
         if "amount_inr" in updates and old and old[0] < 0:
             updates["amount_inr"] = -updates["amount_inr"]  # a refund stays a refund
+        sets = ", ".join(f"{k} = ?" for k in updates)
         cur = conn.execute(f"UPDATE expenses SET {sets} WHERE id = ?",
                            [*updates.values(), int(expense_id)])
     return (f"Updated expense {int(expense_id)}." if cur.rowcount
             else f"No expense with id {int(expense_id)}.")
+
+
+EDITOR_COLUMNS = {"spent_at": "Time", "item": "Item", "amount_inr": "Amount"}
+
+
+def apply_edits(changes: dict) -> dict:
+    """Chat-editor changes {expense_id: {column: new value}} -> one update_expense per row,
+    so the same validation applies. Only changed cells are passed. Returns {id: error} for
+    rows that were not saved; valid rows are saved."""
+    opts, errors = payment_options(), {}
+    for eid, change in changes.items():
+        try:
+            empty = [EDITOR_COLUMNS[k] for k in EDITOR_COLUMNS if k in change
+                     and (change[k] is None or str(change[k]).strip() == "")]
+            if empty:
+                raise ValueError(f"{', '.join(empty)} can't be empty.")
+            fields = {k: change[k] for k in ("spent_at", "item", "category") if k in change}
+            if "amount_inr" in change:
+                fields["amount_inr"] = float(change["amount_inr"])
+                with get_conn() as conn:  # a refund is shown negative; update_expense keeps it so
+                    old = conn.execute("SELECT amount_inr FROM expenses WHERE id = ?",
+                                       (int(eid),)).fetchone()
+                if old and old[0] < 0:
+                    fields["amount_inr"] = abs(fields["amount_inr"])
+            if "payment" in change:
+                label = change["payment"]
+                if label and label not in opts:
+                    raise ValueError(f"Unknown payment method {label!r}.")
+                fields["payment_method"], fields["card_name"] = opts[label] if label else ("", None)
+            msg = update_expense(int(eid), **fields)
+            if msg.startswith("No expense"):
+                raise ValueError(msg)
+        except (TypeError, ValueError) as exc:
+            errors[int(eid)] = str(exc)
+    return errors
 
 
 def delete_expense(expense_id: int) -> str:
@@ -1387,8 +1429,9 @@ def run_tool(name: str, args: dict, user_text: str, ctx: dict) -> str:
             return "Error: look the expense up with list_recent_expenses first."
         if name == "delete_expense":
             return delete_expense(expense_id)
-        args.pop("expense_id")
-        return update_expense(expense_id, **args)
+        # only the schema's fields: the model never sets payment details through an update
+        return update_expense(expense_id, **{k: args.get(k) for k in
+                                             ("spent_at", "item", "amount_inr", "category")})
     return "Unknown tool."
 
 
