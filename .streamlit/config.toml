@@ -10,3 +10,6 @@ baseRadius = "large"
 [client]
 # Hides the Deploy button and developer menu for visitors of the public site.
 toolbarMode = "viewer"
+
+[browser]
+gatherUsageStats = false
