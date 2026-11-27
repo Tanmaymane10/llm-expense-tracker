@@ -25,16 +25,17 @@ def test_recent_escapes_item_category_and_payment():
 def _card(**over):
     c = {"card": XSS, "statement_day": 1, "due_day": 20, "spent_cycle": 500.0,
          "limit": 10000.0, "utilisation": 25.0, "paid": False, "amount_due": 2000.0,
-         "days_to_due": 3}
+         "days_to_due": 3, "due_date": date(2026, 11, 30), "prev_end": date(2026, 11, 14)}
     return {**c, **over}
 
 
 def test_card_row_escapes_and_shows_utilisation():
     out = ui.card_row(_card())
     _safe(out)
-    assert "width:25.0%" in out and "incl. unpaid bill" in out and "Due in 3 days" in out
+    assert "width:25.0%" in out and "Due in 3 days" in out
+    assert "Statement due ₹2,000 · pay by 30 Nov" in out and "Unbilled ₹500 since 14 Nov" in out
     paid = ui.card_row(_card(paid=True, utilisation=5.0))
-    assert "incl. unpaid bill" not in paid and "width:5.0%" in paid
+    assert "Statement due" not in paid and "width:5.0%" in paid and "Unbilled ₹500" in paid
     assert ui.due_text(-2)[0] == "Overdue 2 days" and ui.due_text(9)[1] == ui.MUTED
 
 
@@ -61,10 +62,12 @@ def test_all_cards_shown_sorted_with_quiet_and_undated_rows():
     order = [c["card"] for c in ui.sort_cards(rows)]
     assert order == ["overdue", "big", "small", "late", "A quiet", "b quiet", "Undated"]
     quiet = ui.card_row(rows[0])
-    assert "No bill due" in quiet and "₹0 this cycle" in quiet and "width:12.0%" in quiet
+    assert "No bill due" in quiet and "Unbilled ₹0 since" in quiet and "width:12.0%" in quiet
     assert "Overdue 1 day" in ui.card_row(rows[6])
     undated = ui.card_row(rows[1])
     assert "No bill due" not in undated and "Due in" not in undated  # the app's button says it
+    assert "Unbilled" not in undated
+    assert ui.has_dates(_card(due_day=None))  # month-end pay-by needs no due day
 
 
 def test_hero_escapes_category_alert():

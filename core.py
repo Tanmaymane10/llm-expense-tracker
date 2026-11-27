@@ -258,6 +258,12 @@ def init_db():
         _add_column(conn, "credit_cards", "credit_limit", "REAL")
         _add_column(conn, "credit_cards", "last_reminded_on", "TEXT")
         _add_column(conn, "credit_cards", "paid_through", "TEXT")
+        # One row per paid statement; card_status still reads paid_through for the paid flag.
+        conn.execute("CREATE TABLE IF NOT EXISTS card_payments ("
+                     "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                     "card_id INTEGER NOT NULL REFERENCES credit_cards(id), "
+                     "cycle_start TEXT NOT NULL, cycle_end TEXT NOT NULL, "
+                     "amount REAL NOT NULL, paid_on TEXT NOT NULL, UNIQUE (card_id, cycle_end))")
         # One posting per rule per date. NULLs are distinct, so manual expenses are unaffected.
         conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_expenses_recurring "
                      "ON expenses(recurring_id, spent_at)")
@@ -344,11 +350,12 @@ def register_card(card_name: str, statement_day=None, due_day=None, credit_limit
         updates = {}  # column names are fixed strings, so the f-string SQL is safe
         if statement_day is not None:
             updates["statement_day"] = _check_day(statement_day)
-        if due_day is not None:
-            updates["due_day"] = _check_day(due_day)
+        if due_day is not None:  # 0 clears it: pay by the statement month's last day
+            updates["due_day"] = None if due_day == 0 else _check_day(due_day)
         if credit_limit is not None:
             updates["credit_limit"] = _check_amount(credit_limit)
-        parts = [f"{k.replace('_', ' ')} {inr(v) if k == 'credit_limit' else v}"
+        parts = [f"{k.replace('_', ' ')} "
+                 f"{inr(v) if k == 'credit_limit' else 'cleared' if v is None else v}"
                  for k, v in updates.items()]
         if bill_paid is True:
             sday, dday = conn.execute("SELECT statement_day, due_day FROM credit_cards "
@@ -359,6 +366,10 @@ def register_card(card_name: str, statement_day=None, due_day=None, credit_limit
             c = card_cycle(sday, dday, date.today())
             updates["paid_through"] = c["prev_end"].isoformat()
             amount = _card_spend(conn, card_id, c["prev_start"], c["prev_end"])
+            conn.execute("INSERT OR IGNORE INTO card_payments (card_id, cycle_start, cycle_end, "
+                         "amount, paid_on) VALUES (?, ?, ?, ?, ?)",
+                         (card_id, c["prev_start"].isoformat(), c["prev_end"].isoformat(),
+                          amount, date.today().isoformat()))
             parts.append(f"bill for {_short(c['prev_start'])}-{_short(c['prev_end'])} "
                          f"({inr(amount)}) marked paid")
         conn.execute(f"UPDATE credit_cards SET {', '.join(f'{k} = ?' for k in updates)} "
@@ -378,7 +389,8 @@ def _month_day(y: int, m: int, day: int) -> date:
 
 def card_cycle(statement_day: int, due_day, today: date) -> dict:
     """Closed cycle [prev_start, prev_end] (prev_end = last statement date), current cycle
-    [cur_start, cur_end], and the closed statement's due date (None without a due day).
+    [cur_start, cur_end], and the closed statement's due date. Without a due day it is the
+    last day of the statement's month (bills are paid in full at month-end).
     due_day <= statement_day puts the due date in the month after the statement."""
     m = today.month - (today < _month_day(today.year, today.month, statement_day))
     prev_end = _month_day(today.year, m, statement_day)
@@ -387,7 +399,8 @@ def card_cycle(statement_day: int, due_day, today: date) -> dict:
     return {"prev_start": _month_day(today.year, m - 1, statement_day) + timedelta(days=1),
             "prev_end": prev_end, "cur_start": cur_start,
             "cur_end": _month_day(today.year, m + 1, statement_day),
-            "due_date": _month_day(today.year, due_m, due_day) if due_day else None}
+            "due_date": _month_day(today.year, due_m, due_day) if due_day
+            else _month_day(today.year, m, 31)}
 
 
 def _card_spend(conn, card_id: int, start: date, end: date) -> float:
@@ -429,10 +442,13 @@ def card_status(today: date = None) -> list:
 
 
 def set_paid_through(card_id: int, value) -> None:
-    """Undo for 'Mark bill paid': put back the earlier paid_through (may be None)."""
+    """Undo for 'Mark bill paid': put back the earlier paid_through (may be None) and drop
+    the payment rows recorded after it."""
     with get_conn() as conn:
         conn.execute("UPDATE credit_cards SET paid_through = ? WHERE id = ?",
                      (value, int(card_id)))
+        conn.execute("DELETE FROM card_payments WHERE card_id = ? AND cycle_end > ?",
+                     (int(card_id), value or ""))
 
 
 def due_line(c: dict, today: date):
@@ -1301,7 +1317,8 @@ TOOLS = [
                 "card_name": {"type": "string",
                               "description": "Card name as the user says it, e.g. 'Axis Flipkart'"},
                 "statement_day": {"type": "integer", "description": "1-31"},
-                "due_day": {"type": "integer", "description": "1-31"},
+                "due_day": {"type": "integer",
+                            "description": "1-31; 0 clears it (pay by month-end)"},
                 "credit_limit": {"type": "number"},
                 "bill_paid": {"type": "boolean", "description": "User paid the card bill"},
             },

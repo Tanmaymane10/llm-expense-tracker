@@ -18,8 +18,10 @@ from core import (
     INCOME_SOURCES,
     MAX_AMOUNT_INR,
     MAX_INPUT_CHARS,
+    _short,
     add_income,
     budget_status,
+    card_cycle,
     card_status,
     chat_turn,
     delete_income,
@@ -203,10 +205,10 @@ hr { border-color: var(--border); }
 }
 .st-key-bottomnav button span[data-testid="stIconMaterial"] { font-size: 22px; }
 .st-key-bottomnav [data-testid="stBaseButton-primary"] { color: var(--accent) !important; }
-/* Home card rows: the "Set billing dates" button overlays the row's due slot */
+/* Home card rows: the "Set billing dates" button overlays the row's due slot (top right) */
 [class*="st-key-cardrow_"] { position: relative; gap: 0; }
 [class*="st-key-carddates_"] {
-  position: absolute; right: 14px; bottom: 8px; width: auto !important;
+  position: absolute; right: 14px; top: 10px; width: auto !important;
 }
 [class*="st-key-carddates_"] button {
   min-height: 24px !important; padding: 0 !important; font-size: 12px;
@@ -411,6 +413,34 @@ def _after_write(msg: str):
     st.rerun()
 
 
+def _bill(c: dict) -> str:
+    return f"{c['prev_start']:%d %b}-{c['prev_end']:%d %b} ({inr(c['amount_due'])})"
+
+
+def _mark_paid_controls(c: dict, where: str, label: str):
+    """Mark the closed statement paid (with a confirm step), and Undo right after."""
+    name, key = c["card"], f"{where}_{c['id']}"
+    if c["paid"] is False:
+        if st.button(label, key=f"markpaid_{key}", type="tertiary"):
+            st.session_state.confirm_paid = key
+        if st.session_state.get("confirm_paid") == key:
+            st.warning(f"Mark the {name} bill for {_bill(c)} as paid? "
+                       "This logs no expense or income.")
+            yes, no = st.columns(2)
+            if yes.button("Yes, mark paid", type="primary", key=f"yespaid_{key}"):
+                st.session_state.undo_paid = (key, c["id"], c["paid_through"])
+                del st.session_state.confirm_paid
+                _after_write(register_card(name, bill_paid=True))
+            if no.button("Cancel", key=f"cancelpaid_{key}"):
+                del st.session_state.confirm_paid
+                st.rerun()
+    undo = st.session_state.get("undo_paid")
+    if undo and undo[0] == key and st.button("Undo paid", key=f"undopaid_{key}"):
+        set_paid_through(undo[1], undo[2])
+        del st.session_state.undo_paid
+        _after_write(f"{name}: bill marked unpaid again.")
+
+
 def render_subscriptions():
     st.subheader("Subscriptions")
     st.caption("Each payment is logged automatically on its due date. You can also say "
@@ -532,48 +562,39 @@ def render_plan():
     render_subscriptions()
 
     st.subheader("Cards")
-    st.caption("Statement and due days drive the bill reminders. Leave a field empty to keep it.")
+    st.caption("Statement and due days drive the bill reminders. Without a due day the bill "
+               "is due on the last day of the statement's month.")
     cards = {c["card"]: c for c in read("card_status")}
     name = st.selectbox("Card", list(cards))
     if name:
         c = cards[name]
-        with st.form("card_form"):
-            c1, c2, c3 = st.columns(3)
-            day_help = "The day from your statement, e.g. 15"
-            sday = c1.number_input("Statement day (1-31)", 1, 31, value=c["statement_day"],
-                                   step=1, help=day_help)
-            dday = c2.number_input("Due day (1-31)", 1, 31, value=c["due_day"], step=1,
-                                   help=day_help)
-            limit = c3.number_input("Credit limit (₹)", 1.0, float(MAX_AMOUNT_INR),
-                                    value=c["limit"], step=5000.0, format="%.0f",
-                                    help="Total limit, not available limit")
-            if st.form_submit_button("Save card"):
-                try:
-                    _after_write(register_card(name, sday, dday, limit))
-                except ValueError as e:
-                    st.error(str(e))
+        k = c["id"]  # per-card keys, so values don't carry over when switching cards
+        c1, c2, c3 = st.columns(3)
+        sday = c1.number_input("Statement day (1-31)", 1, 31, value=c["statement_day"],
+                               step=1, key=f"sday_{k}", help="The day from your statement, "
+                               "e.g. 14. Days 29-31 fall on the month's last day when shorter.")
+        dday = c2.number_input("Due day (1-31)", 1, 31, value=c["due_day"], step=1,
+                               key=f"dday_{k}", help="Leave empty to pay by month-end")
+        limit = c3.number_input("Credit limit (₹)", 1.0, float(MAX_AMOUNT_INR),
+                                value=c["limit"], step=5000.0, format="%.0f",
+                                key=f"limit_{k}", help="Total limit, not available limit")
+        month_end = st.checkbox("Pay by month-end (no due day)", value=c["due_day"] is None,
+                                key=f"monthend_{k}")
+        if sday:  # recomputed on every edit, so a wrong day shows before saving
+            cy = card_cycle(sday, None if month_end else dday, date.today())
+            st.caption(f"Current cycle {_short(cy['cur_start'])} – {_short(cy['cur_end'])} · "
+                       f"last statement {_short(cy['prev_end'])}, pay by "
+                       f"{_short(cy['due_date'])}")
+            if sday > 28:
+                st.caption("In shorter months the statement falls on the last day.")
+        if st.button("Save card", key=f"savecard_{k}"):
+            try:
+                _after_write(register_card(name, sday, 0 if month_end else dday, limit))
+            except ValueError as e:
+                st.error(str(e))
         if c["paid"] is False:
-            bill = (f"{c['prev_start']:%d %b}-{c['prev_end']:%d %b} "
-                    f"({inr(c['amount_due'])})")
-            st.caption(f"Closed cycle {bill} unpaid.")
-            if st.button("Mark bill paid"):
-                st.session_state.confirm_paid = name
-            if st.session_state.get("confirm_paid") == name:
-                st.warning(f"Mark the {name} bill for {bill} as paid? "
-                           "This logs no expense or income.")
-                yes, no = st.columns(2)
-                if yes.button("Yes, mark paid", type="primary"):
-                    st.session_state.undo_paid = (name, c["id"], c["paid_through"])
-                    del st.session_state.confirm_paid
-                    _after_write(register_card(name, bill_paid=True))
-                if no.button("Cancel", key="cancel_paid"):
-                    del st.session_state.confirm_paid
-                    st.rerun()
-        undo = st.session_state.get("undo_paid")
-        if undo and undo[0] == name and st.button("Undo paid"):
-            set_paid_through(undo[1], undo[2])
-            del st.session_state.undo_paid
-            _after_write(f"{name}: bill marked unpaid again.")
+            st.caption(f"Closed cycle {_bill(c)} unpaid.")
+        _mark_paid_controls(c, "plan", "Mark bill paid")
 
     st.subheader("Income")
     st.caption("Salary, freelance or other money received. Refunds and cashback are not income.")
@@ -759,6 +780,7 @@ def render_home():
                 if not ui.has_dates(card):  # sits in the row's due slot (CSS)
                     st.button("Set billing dates in Plan", key=f"carddates_{card['id']}",
                               type="tertiary", on_click=_go, args=("Plan",))
+                _mark_paid_controls(card, "home", "Mark paid")
         st.html(ui.non_card_row(fig["non_card"]))
     for card in cards:
         if line := due_line(card, today):

@@ -181,7 +181,8 @@ def card_art(name: str) -> str:
 
 
 def has_dates(c: dict) -> bool:
-    return bool(c["statement_day"] and c["due_day"])
+    """A statement day is enough: without a due day the bill is paid by month-end."""
+    return bool(c["statement_day"])
 
 
 def bill_upcoming(c: dict) -> bool:
@@ -198,8 +199,9 @@ def sort_cards(rows: list) -> list:
 
 
 def card_row(c: dict) -> str:
-    """One Home card row. A card without billing dates leaves the due slot to the app's
-    "Set billing dates in Plan" button."""
+    """One Home card row: name and due countdown, a bar of statement due + unbilled against
+    the limit, then the two figures. A card without a statement day leaves the due slot to
+    the app's "Set billing dates in Plan" button."""
     quiet = not bill_upcoming(c)
     if not has_dates(c):
         text, color, weight = "", MUTED, 400
@@ -208,16 +210,23 @@ def card_row(c: dict) -> str:
     else:
         text, color, weight = due_text(c["days_to_due"])
     if c["limit"]:
-        used = c["utilisation"] or 0.0  # cycle spend plus any unpaid closed bill
-        unpaid = " · incl. unpaid bill" if c["paid"] is False and c["amount_due"] else ""
-        caption = f"of {money(c['limit'])} limit{unpaid}"
+        used = c["utilisation"] or 0.0  # unbilled plus any unpaid statement
+        caption = f"of {money(c['limit'])} limit"
         bar = (f'<div style="height:5px;border-radius:999px;background:{TRACK}"><div '
                f'style="height:5px;border-radius:999px;width:{min(used, 100):.1f}%;'
                f'background:{DANGER if used > 100 else WARN if used >= 80 else ACCENT}">'
                '</div></div>')
     else:
         caption, bar = "no limit set", ""
-    amount = f"{money(0)} this cycle" if quiet else money(c["spent_cycle"])
+    lines = ""
+    if c["paid"] is False and c["amount_due"]:
+        lines += (f'<div class="num" style="font-size:13px;font-weight:600">Statement due '
+                  f'{money(c["amount_due"])} · pay by {c["due_date"].day} '
+                  f'{c["due_date"]:%b}</div>')
+    unbilled = ""
+    if has_dates(c):
+        unbilled = (f'Unbilled {money(c["spent_cycle"])} since {c["prev_end"].day} '
+                    f'{c["prev_end"]:%b}')
     ink = f"color:{MUTED};" if quiet else ""
     return (
         '<div style="display:flex;align-items:center;gap:12px;background:#151A21;'
@@ -227,14 +236,14 @@ def card_row(c: dict) -> str:
         '<span style="position:absolute;left:6px;bottom:5px;width:9px;height:6px;'
         'border-radius:2px;background:rgba(11,14,19,0.45)"></span></div>'
         '<div style="flex-grow:1;min-width:0;display:flex;flex-direction:column;gap:6px">'
-        f'<div style="display:flex;justify-content:space-between;gap:8px;{ink}">'
+        '<div style="display:flex;justify-content:space-between;gap:8px;min-height:20px">'
         '<span style="font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;'
-        f'white-space:nowrap">{e(c["card"])}</span><span class="num" style="font-size:14px;'
-        f'font-weight:600;white-space:nowrap">{amount}</span></div>{bar}'
-        '<div style="display:flex;justify-content:space-between;gap:8px;font-size:12px;'
-        'min-height:18px">'
-        f'<span style="color:{MUTED}">{caption}</span>'
-        f'<span style="color:{color};font-weight:{weight};white-space:nowrap">{text}</span>'
+        f'white-space:nowrap;{ink}">{e(c["card"])}</span>'
+        f'<span style="font-size:12px;color:{color};font-weight:{weight};white-space:nowrap">'
+        f'{text}</span></div>{bar}{lines}'
+        '<div style="display:flex;justify-content:space-between;gap:8px;font-size:12px">'
+        f'<span class="num" style="{ink}">{unbilled}</span>'
+        f'<span style="color:{MUTED};white-space:nowrap">{caption}</span>'
         '</div></div></div>')
 
 

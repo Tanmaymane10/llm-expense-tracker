@@ -36,8 +36,15 @@ def cycle(sday, dday, today):
     (31, 30, "2027-02-28", ("2027-02-01", "2027-02-28", "2027-03-01", "2027-03-31", "2027-03-30")),
     (31, 30, "2027-02-27", ("2027-01-01", "2027-01-31", "2027-02-01", "2027-02-28", "2027-02-28")),
     (31, 30, "2028-02-29", ("2028-02-01", "2028-02-29", "2028-03-01", "2028-03-31", "2028-03-30")),
-    # no due day
-    (10, None, "2026-11-19", ("2026-10-11", "2026-11-10", "2026-11-11", "2026-12-10", "None")),
+    # no due day: pay by the last day of the statement's month
+    (10, None, "2026-11-19", ("2026-10-11", "2026-11-10", "2026-11-11", "2026-12-10",
+                              "2026-11-30")),
+    (22, None, "2026-11-27", ("2026-10-23", "2026-11-22", "2026-11-23", "2026-12-22",
+                              "2026-11-30")),
+    (14, None, "2026-12-03", ("2026-10-15", "2026-11-14", "2026-11-15", "2026-12-14",
+                              "2026-11-30")),  # past it: overdue
+    (31, None, "2027-02-28", ("2027-02-01", "2027-02-28", "2027-03-01", "2027-03-31",
+                              "2027-02-28")),
 ])
 def test_card_cycle(sday, dday, today, expected):
     assert cycle(sday, dday, today) == expected
@@ -239,6 +246,40 @@ def test_plan_mark_paid_needs_confirm_and_undo_restores():
     click(at, "Undo paid")
     assert paid_through() == "2020-01-01" and core.card_status()[0]["paid"] is False
     assert "Undo paid" not in [b.label for b in at.button]
+
+
+def test_mark_paid_records_payment_and_undo_removes_it():
+    c = setup_due_soon()
+    spend(c["prev_end"], 8420)
+    core.register_card("HDFC MoneyBack", bill_paid=True)
+    core.register_card("HDFC MoneyBack", bill_paid=True)  # twice: still one row
+    rows = query("SELECT card_id, cycle_start, cycle_end, amount, paid_on FROM card_payments")
+    assert rows == [(card_id(), str(c["prev_start"]), str(c["prev_end"]), 8420, str(TODAY))]
+    core.set_paid_through(card_id(), None)
+    assert count_rows("card_payments") == 0 and core.card_status()[0]["paid"] is False
+
+
+def test_due_day_zero_clears_it_and_due_falls_back_to_month_end():
+    core.register_card("HDFC MoneyBack", statement_day=14, due_day=2)
+    assert "due day cleared" in core.register_card("HDFC MoneyBack", due_day=0)
+    with core.get_conn() as conn:  # a closed-cycle spend, so a statement is due
+        conn.execute("INSERT INTO expenses (spent_at, item, amount_inr, category, card_id) "
+                     "VALUES ('2026-11-10 10:00', 'tv', 8420, 'shopping', ?)", (card_id(),))
+    s = core.card_status(D("2026-11-27"))[0]
+    assert (s["due_day"], s["due_date"], s["days_to_due"]) == (None, D("2026-11-30"), 3)
+
+
+def test_home_mark_paid_hides_statement_line():
+    from test_app_smoke import run_app
+    c = setup_due_soon()
+    spend(c["prev_end"], 500)
+    at = run_app()
+    assert any("Statement due" in h.proto.body for h in at.get("html"))
+    next(b for b in at.button if b.label == "Mark paid").click().run()
+    next(b for b in at.button if b.label == "Yes, mark paid").click().run()
+    assert not at.exception and count_rows("card_payments") == 1
+    assert not any("Statement due" in h.proto.body for h in at.get("html"))
+    assert "Undo paid" in [b.label for b in at.button]
 
 
 # ---------------------------------------------------------------- regression

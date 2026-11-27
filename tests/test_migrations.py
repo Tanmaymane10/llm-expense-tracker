@@ -29,7 +29,7 @@ VALUES ('2026-10-01 09:00', 'chai', 15, 'food', 'chai 15', NULL, NULL),
        ('2026-10-17 11:00', 'lunch', 250, 'food', 'lunch upi', 'upi', NULL);
 """
 
-NEW_TABLES = {"budgets", "income", "recurring", "llm_calls", "credit_cards"}
+NEW_TABLES = {"budgets", "income", "recurring", "llm_calls", "credit_cards", "card_payments"}
 
 
 def _make_old_db(path, script):
