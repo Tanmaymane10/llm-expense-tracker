@@ -22,21 +22,29 @@ def require_pin() -> None:
         return
 
     expected = os.environ.get("APP_PIN", "")
-    st.html(ui.brand())  # static: no data in it
-    if not (expected.isdigit() and len(expected) == 6):  # fail closed
-        st.error("The server PIN is not configured.")
-        st.stop()
+    st.html(ui.PIN_CSS)  # style-only: Streamlit puts it in the event container, no layout space
+    with st.container(key="pin_gate"):  # the glass card; PIN_CSS centers it
+        st.html(ui.pin_head())  # static: no data in it
+        if not (expected.isdigit() and len(expected) == 6):  # fail closed
+            st.error("The server PIN is not configured.")
+            st.stop()
 
-    state = _attempts()
-    now = time.time()
-    if now < state["locked_until"]:
-        minutes = int((state["locked_until"] - now) // 60) + 1
-        st.error(f"Too many wrong attempts. Try again in about {minutes} min.")
-        st.stop()
+        state = _attempts()
+        now = time.time()
+        if now < state["locked_until"]:
+            minutes = int((state["locked_until"] - now) // 60) + 1
+            st.html(ui.pin_error(f"Too many wrong attempts. Try again in about {minutes} min."))
+            st.stop()
 
-    with st.form("pin_form"):
-        pin = st.text_input("Enter your 6-digit PIN", type="password", max_chars=6)
-        submitted = st.form_submit_button("Unlock", type="primary", width="stretch")
+        with st.form("pin_form", border=False):  # a form, so Enter submits
+            pin = st.text_input("6-digit PIN", type="password", max_chars=6,
+                                placeholder="••••••")
+            alert = st.empty()  # the wrong-PIN line sits between the field and the button
+            submitted = st.form_submit_button("Unlock", type="primary", width="stretch",
+                                              icon=":material/arrow_forward:",
+                                              icon_position="right")
+        st.html(ui.pin_footer())
+    st.html(ui.PIN_KEYPAD_JS, unsafe_allow_javascript=True)
 
     if submitted:
         if hmac.compare_digest(pin.encode(), expected.encode()):
@@ -47,7 +55,8 @@ def require_pin() -> None:
         if state["fails"] >= MAX_FAILS:
             state["fails"] = 0
             state["locked_until"] = now + LOCK_SECONDS
-            st.error("Too many wrong attempts. Locked for 15 minutes.")
+            alert.html(ui.pin_error("Too many wrong attempts. Locked for 15 minutes."))
         else:
-            st.error(f"Wrong PIN. {MAX_FAILS - state['fails']} attempts left.")
+            left = MAX_FAILS - state["fails"]
+            alert.html(ui.pin_error(f"Wrong PIN. {left} {'try' if left == 1 else 'tries'} left."))
     st.stop()

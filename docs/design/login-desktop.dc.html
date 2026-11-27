@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>QORVIAN login, laptop</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#07090D}
+a{color:#C8F25A;text-decoration:none}a:hover{color:#E2FF8F}
+</style>
+</helmet>
+<div style="width:1280px;height:800px;box-sizing:border-box;background:#07090D;color:#EEF2F6;font-family:Inter,system-ui,sans-serif;position:relative;overflow:hidden;display:flex;align-items:center;justify-content:center;padding:24px">
+
+<svg aria-hidden="true" viewBox="0 0 1280 800" width="1280" height="800" style="position:absolute;inset:0">
+  <defs>
+    <filter id="soft" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="70"></feGaussianBlur></filter>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="10"></feGaussianBlur></filter>
+    <linearGradient id="g1" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#C8F25A" stop-opacity="0"></stop><stop offset="0.45" stop-color="#C8F25A"></stop><stop offset="1" stop-color="#2FD6B5"></stop></linearGradient>
+    <linearGradient id="g2" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#2FD6B5" stop-opacity="0"></stop><stop offset="0.5" stop-color="#6FB7F2"></stop><stop offset="1" stop-color="#4C7DFF" stop-opacity="0.2"></stop></linearGradient>
+    <linearGradient id="g3" x1="1" y1="0" x2="0" y2="0"><stop offset="0" stop-color="#4C7DFF" stop-opacity="0.1"></stop><stop offset="0.5" stop-color="#6FB7F2"></stop><stop offset="1" stop-color="#8B7CF6" stop-opacity="0"></stop></linearGradient>
+  </defs>
+  <circle cx="180" cy="650" r="270" fill="#C8F25A" opacity="0.18" filter="url(#soft)"></circle>
+  <circle cx="1100" cy="150" r="300" fill="#4C7DFF" opacity="0.28" filter="url(#soft)"></circle>
+  <circle cx="1000" cy="720" r="230" fill="#8B7CF6" opacity="0.20" filter="url(#soft)"></circle>
+  <circle cx="140" cy="150" r="190" fill="#2FD6B5" opacity="0.14" filter="url(#soft)"></circle>
+  <g fill="none" stroke-linecap="round">
+    <path d="M -100 610 C 300 470, 620 780, 1380 290" stroke="url(#g1)" stroke-width="26" opacity="0.4" filter="url(#glow)"></path>
+    <path d="M -100 610 C 300 470, 620 780, 1380 290" stroke="url(#g1)" stroke-width="5"></path>
+    <path d="M -80 690 C 360 560, 700 830, 1400 420" stroke="url(#g2)" stroke-width="2"></path>
+    <path d="M 1380 70 C 900 230, 700 -10, -100 250" stroke="url(#g3)" stroke-width="30" opacity="0.36" filter="url(#glow)"></path>
+    <path d="M 1380 70 C 900 230, 700 -10, -100 250" stroke="url(#g3)" stroke-width="6"></path>
+    <path d="M 1380 170 C 960 300, 640 120, -80 340" stroke="url(#g2)" stroke-width="1.5" opacity="0.8"></path>
+    <path d="M 200 900 C 500 690, 1000 830, 1320 590" stroke="url(#g1)" stroke-width="34" opacity="0.16" filter="url(#glow)"></path>
+  </g>
+</svg>
+<div aria-hidden="true" style="position:absolute;inset:0;background:radial-gradient(ellipse at 50% 50%, rgba(7,9,13,0.2) 0%, rgba(7,9,13,0.7) 70%)"></div>
+
+<section aria-label="Unlock QORVIAN" style="position:relative;width:100%;max-width:400px;box-sizing:border-box;padding:34px 32px 28px;border-radius:28px;background:rgba(21,26,33,0.58);border:1px solid rgba(255,255,255,0.12);backdrop-filter:blur(24px) saturate(140%);-webkit-backdrop-filter:blur(24px) saturate(140%);box-shadow:0 30px 80px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.08);display:flex;flex-direction:column;gap:24px">
+
+  <div style="display:flex;align-items:center;gap:10px">
+    <div style="width:40px;height:40px;border-radius:12px;background:#C8F25A;color:#0B0E13;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:19px">Q</div>
+    <span style="font-size:16px;font-weight:700;letter-spacing:0.12em">QORVIAN</span>
+  </div>
+
+  <div style="display:flex;flex-direction:column;gap:6px">
+    <h1 style="margin:0;font-size:34px;font-weight:700;letter-spacing:-0.02em;line-height:1.1">Welcome back</h1>
+    <p style="margin:0;font-size:14px;color:#A9B3C1;line-height:1.45">Enter your PIN to open your expenses.</p>
+  </div>
+
+  <div style="display:flex;flex-direction:column;gap:8px">
+    <label for="pin-d" style="font-size:13px;color:#A9B3C1">6-digit PIN</label>
+    <div style="display:flex;align-items:center;height:56px;border-radius:16px;background:rgba(11,14,19,0.6);border:1px solid rgba(255,255,255,0.14);padding:0 6px 0 18px">
+      <input id="pin-d" type="password" inputmode="numeric" maxlength="6" placeholder="••••••" style="flex-grow:1;min-width:0;background:transparent;border:0;outline:none;color:#EEF2F6;font:inherit;font-size:22px;letter-spacing:0.5em">
+      <button aria-label="Show PIN" style="width:44px;height:44px;border-radius:12px;border:0;background:transparent;color:#A9B3C1;display:flex;align-items:center;justify-content:center;cursor:pointer">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+      </button>
+    </div>
+    <p role="alert" style="margin:0;font-size:13px;color:#FF9A9A;display:flex;align-items:center;gap:6px">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 8v5M12 16h.01"></path></svg>
+      Wrong PIN. 4 tries left.
+    </p>
+  </div>
+
+  <button style="height:54px;border-radius:16px;border:0;background:#C8F25A;color:#0B0E13;font:inherit;font-size:16px;font-weight:700;display:flex;align-items:center;justify-content:center;gap:8px;cursor:pointer;box-shadow:0 10px 30px rgba(200,242,90,0.22)">
+    Unlock
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"></path></svg>
+  </button>
+
+  <div style="display:flex;align-items:center;gap:8px;font-size:12px;color:#8C97A6;border-top:1px solid rgba(255,255,255,0.08);padding-top:16px">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"></rect><path d="M8 11V7a4 4 0 0 1 8 0v4"></path></svg>
+    <span>Private to you. Locks again when you close the app.</span>
+  </div>
+</section>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":800}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

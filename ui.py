@@ -5,6 +5,7 @@ goes through e() before it is put in HTML. Item names come from the user and fro
 """
 import html
 from datetime import date, timedelta
+from urllib.parse import quote
 
 from core import inr
 
@@ -59,13 +60,190 @@ def clock(t) -> str:
     return f"{(t.hour % 12) or 12}:{t.minute:02d} {'am' if t.hour < 12 else 'pm'}"
 
 
-def brand() -> str:
-    """Q tile + wordmark, for the PIN gate. No data in it."""
-    return (f'<div style="display:flex;align-items:center;gap:10px;{FONT}">'
-            '<div style="width:34px;height:34px;border-radius:11px;background:#C8F25A;'
+# ---- PIN gate (docs/design/login-phone.dc.html, login-desktop.dc.html). No data in any of it.
+_LOGIN_DEFS = (
+    '<linearGradient id="g1" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#C8F25A" '
+    'stop-opacity="0"/><stop offset="0.45" stop-color="#C8F25A"/><stop offset="1" '
+    'stop-color="#2FD6B5"/></linearGradient>'
+    '<linearGradient id="g2" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#2FD6B5" '
+    'stop-opacity="0"/><stop offset="0.5" stop-color="#6FB7F2"/><stop offset="1" '
+    'stop-color="#4C7DFF" stop-opacity="0.2"/></linearGradient>'
+    '<linearGradient id="g3" x1="1" y1="0" x2="0" y2="0"><stop offset="0" stop-color="#4C7DFF" '
+    'stop-opacity="0.1"/><stop offset="0.5" stop-color="#6FB7F2"/><stop offset="1" '
+    'stop-color="#8B7CF6" stop-opacity="0"/></linearGradient>')
+
+
+def _login_art(w, h, soft, glow, blobs, paths) -> str:
+    """The light-streak background as an SVG data URI. paths: (d, gradient, width, opacity,
+    glow?)."""
+    circles = "".join(f'<circle cx="{x}" cy="{y}" r="{r}" fill="{c}" opacity="{o}" '
+                      'filter="url(#soft)"/>' for x, y, r, c, o in blobs)
+    strokes = "".join(f'<path d="{d}" stroke="url(#{g})" stroke-width="{sw}" opacity="{o}"'
+                      + (' filter="url(#glow)"' if gl else "") + "/>"
+                      for d, g, sw, o, gl in paths)
+    svg = (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {w} {h}" '
+           'preserveAspectRatio="xMidYMid slice"><defs>'
+           '<filter id="soft" x="-50%" y="-50%" width="200%" height="200%">'
+           f'<feGaussianBlur stdDeviation="{soft}"/></filter>'
+           '<filter id="glow" x="-20%" y="-20%" width="140%" height="140%">'
+           f'<feGaussianBlur stdDeviation="{glow}"/></filter>{_LOGIN_DEFS}</defs>{circles}'
+           f'<g fill="none" stroke-linecap="round">{strokes}</g></svg>')
+    return "data:image/svg+xml," + quote(svg)
+
+
+_ART_PHONE = _login_art(390, 844, 38, 7, [
+    (40, 720, 150, "#C8F25A", 0.22), (370, 150, 170, "#4C7DFF", 0.30),
+    (320, 800, 130, "#8B7CF6", 0.22), (20, 210, 110, "#2FD6B5", 0.16)], [
+    ("M -60 640 C 80 530, 210 720, 470 380", "g1", 18, 0.45, True),
+    ("M -60 640 C 80 530, 210 720, 470 380", "g1", 4, 1, False),
+    ("M -40 712 C 120 610, 270 770, 470 500", "g2", 2, 1, False),
+    ("M 460 110 C 300 220, 250 30, -40 250", "g3", 22, 0.4, True),
+    ("M 460 110 C 300 220, 250 30, -40 250", "g3", 5, 1, False),
+    ("M 470 196 C 320 300, 230 150, -30 330", "g2", 1.5, 0.8, False),
+    ("M 110 920 C 180 770, 330 830, 430 640", "g1", 26, 0.18, True)])
+_ART_DESKTOP = _login_art(1280, 800, 70, 10, [
+    (180, 650, 270, "#C8F25A", 0.18), (1100, 150, 300, "#4C7DFF", 0.28),
+    (1000, 720, 230, "#8B7CF6", 0.20), (140, 150, 190, "#2FD6B5", 0.14)], [
+    ("M -100 610 C 300 470, 620 780, 1380 290", "g1", 26, 0.4, True),
+    ("M -100 610 C 300 470, 620 780, 1380 290", "g1", 5, 1, False),
+    ("M -80 690 C 360 560, 700 830, 1400 420", "g2", 2, 1, False),
+    ("M 1380 70 C 900 230, 700 -10, -100 250", "g3", 30, 0.36, True),
+    ("M 1380 70 C 900 230, 700 -10, -100 250", "g3", 6, 1, False),
+    ("M 1380 170 C 960 300, 640 120, -80 340", "g2", 1.5, 0.8, False),
+    ("M 200 900 C 500 690, 1000 830, 1320 590", "g1", 34, 0.16, True)])
+
+# Only rendered by the PIN gate, so none of it ships after login. Everything is scoped to
+# .st-key-pin_gate (the card) or to the page while it holds the card.
+PIN_CSS = """<style>
+/* the art is the app background: decorative, never focusable or clickable, covers the viewport */
+.stApp:has(.st-key-pin_gate) {
+  background: radial-gradient(ellipse at 50% 50%, rgba(7,9,13,0.15) 0%, rgba(7,9,13,0.65) 75%),
+    url("ART_PHONE") center / cover no-repeat, #07090D;
+}
+[data-testid="stMainBlockContainer"]:has(.st-key-pin_gate) {
+  min-height: 100vh;
+  min-height: 100dvh;
+  box-sizing: border-box;
+  padding: 24px 16px !important;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+/* zero-height siblings (style, script) must not add flex gaps that push the card off center */
+[data-testid="stMainBlockContainer"]:has(.st-key-pin_gate) > [data-testid="stVerticalBlock"] {
+  gap: 0;
+  justify-content: center;  /* this block grows to the full height, so center inside it */
+}
+.st-key-pin_gate {
+  width: 100%;
+  max-width: 342px;
+  margin: 0 auto;
+  box-sizing: border-box;
+  padding: 28px 24px 24px;
+  gap: 22px;
+  border-radius: 28px;
+  background: rgba(21,26,33,0.58);
+  border: 1px solid rgba(255,255,255,0.12);
+  -webkit-backdrop-filter: blur(24px) saturate(140%);
+  backdrop-filter: blur(24px) saturate(140%);
+  box-shadow: 0 30px 80px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.08);
+}
+.st-key-pin_gate h1 {
+  margin: 0; padding: 0 !important; font-size: 32px !important; font-weight: 700 !important;
+  letter-spacing: -0.02em; line-height: 1.1;
+}
+.st-key-pin_gate [data-testid="stForm"] {
+  background: transparent; border: 0; border-radius: 0; padding: 0;
+}
+.st-key-pin_gate [data-testid="stForm"] [data-testid="stVerticalBlock"] { gap: 8px; }
+.st-key-pin_gate [data-testid="stWidgetLabel"] p { font-size: 13px; color: #A9B3C1; }
+.st-key-pin_gate [data-testid="InputInstructions"] { display: none; }
+.st-key-pin_gate [data-testid="stTextInputRootElement"] {
+  height: 56px;
+  border-radius: 16px !important;
+  background: rgba(11,14,19,0.6) !important;
+  border: 1px solid rgba(255,255,255,0.14) !important;
+  padding-right: 6px;
+}
+.st-key-pin_gate [data-testid="stTextInputRootElement"]:focus-within {
+  border-color: rgba(200,242,90,0.55) !important;
+  box-shadow: 0 0 0 4px rgba(200,242,90,0.10);
+}
+.st-key-pin_gate input {
+  padding-left: 18px; color: #EEF2F6; font-size: 22px; letter-spacing: 0.5em;
+}
+.st-key-pin_gate .stFormSubmitButton { margin-top: 14px; }
+.st-key-pin_gate [data-testid="stBaseButton-primaryFormSubmit"] {
+  min-height: 54px;
+  border-radius: 16px;
+  font-size: 16px;
+  font-weight: 700;
+  box-shadow: 0 10px 30px rgba(200,242,90,0.22);
+}
+.st-key-pin_gate [data-testid="stBaseButton-primaryFormSubmit"] p {
+  font-size: 16px; font-weight: 700;
+}
+@media (min-width: 641px) {
+  .stApp:has(.st-key-pin_gate) {
+    background: radial-gradient(ellipse at 50% 50%, rgba(7,9,13,0.2) 0%, rgba(7,9,13,0.7) 70%),
+      url("ART_DESKTOP") center / cover no-repeat, #07090D;
+  }
+  .st-key-pin_gate { max-width: 400px; padding: 34px 32px 28px; gap: 24px; }
+  .st-key-pin_gate h1 { font-size: 34px !important; }
+}
+</style>""".replace("ART_PHONE", _ART_PHONE).replace("ART_DESKTOP", _ART_DESKTOP)
+
+# phones: digit keypad and a "Go" key. Streamlit has no API for these attributes.
+PIN_KEYPAD_JS = """<script>
+(() => {
+  let tries = 0;
+  const set = () => {
+    const i = document.querySelector(".st-key-pin_gate input");
+    if (!i) return ++tries < 100 && requestAnimationFrame(set);
+    i.setAttribute("inputmode", "numeric");
+    i.setAttribute("enterkeyhint", "go");
+  };
+  set();
+})();
+</script>"""
+
+
+def pin_head() -> str:
+    """Q tile + wordmark, then the greeting."""
+    return (f'<div style="display:flex;flex-direction:column;gap:22px;{FONT}">'
+            '<div style="display:flex;align-items:center;gap:10px">'
+            '<div style="width:40px;height:40px;border-radius:12px;background:#C8F25A;'
             'color:#0B0E13;display:flex;align-items:center;justify-content:center;'
-            'font-weight:800;font-size:17px">Q</div><span style="font-size:17px;'
-            'font-weight:700;letter-spacing:0.08em">QORVIAN</span></div>')
+            'font-weight:800;font-size:19px">Q</div><span style="font-size:16px;'
+            'font-weight:700;letter-spacing:0.12em">QORVIAN</span></div>'
+            '<div style="display:flex;flex-direction:column;gap:6px"><h1>Welcome back</h1>'
+            '<p style="margin:0;font-size:14px;color:#A9B3C1;line-height:1.45">'
+            'Enter your PIN to open your expenses.</p></div></div>')
+
+
+def _icon(shapes: str, color: str) -> str:
+    """14px line icon. st.html strips inline <svg>, so it goes in as an image."""
+    svg = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" '
+           f'stroke="{color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+           f'{shapes}</svg>')
+    return f'<img src="data:image/svg+xml,{quote(svg)}" width="14" height="14" alt="">'
+
+
+def pin_error(message: str) -> str:
+    """The red line under the PIN field."""
+    return ('<p role="alert" style="margin:0;font-family:Inter,system-ui,sans-serif;'
+            f'font-size:13px;color:{DANGER_INK};display:flex;align-items:center;gap:6px">'
+            + _icon('<circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/>', DANGER_INK)
+            + f'{e(message)}</p>')
+
+
+def pin_footer() -> str:
+    return ('<div style="display:flex;align-items:center;gap:8px;font-family:Inter,system-ui,'
+            f'sans-serif;font-size:12px;color:{MUTED};border-top:1px solid '
+            'rgba(255,255,255,0.08);padding-top:16px">'
+            + _icon('<rect x="4" y="11" width="16" height="10" rx="2"/>'
+                    '<path d="M8 11V7a4 4 0 0 1 8 0v4"/>', MUTED)
+            + '<span>Private to you. Locks again when you close the app.</span></div>')
 
 
 def header(today: date) -> str:

@@ -48,6 +48,21 @@ def test_pin_gate_blocks_until_correct(monkeypatch):
     assert active_view(at) == ["Home"]
 
 
+def test_wrong_pin_shows_tries_left(monkeypatch):
+    import auth
+    monkeypatch.setenv("APP_PIN", "123456")
+    auth._attempts.clear()  # shared across sessions (and tests): start from 0 fails
+    try:
+        at = AppTest.from_file(APP, default_timeout=60).run()
+        at.text_input[0].set_value("000000")
+        at.button[0].click().run()
+        bodies = [h.proto.body for h in at.get("html")]
+        assert any("Wrong PIN. 4 tries left." in b and 'role="alert"' in b for b in bodies)
+        assert not nav_keys(at)
+    finally:
+        auth._attempts.clear()
+
+
 def test_app_loads_with_empty_database():
     at = run_app()
     assert not at.exception
@@ -246,7 +261,7 @@ def test_lock_button_relocks(monkeypatch):
     monkeypatch.setenv("APP_PIN", "123456")
     at = run_app()
     at.button(key="lock").click().run()
-    assert not nav_keys(at) and at.text_input[0].label == "Enter your 6-digit PIN"
+    assert not nav_keys(at) and at.text_input[0].label == "6-digit PIN"
 
 
 def test_plan_saves_day_to_day_target_and_limit():
