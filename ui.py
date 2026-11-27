@@ -216,7 +216,8 @@ def pin_head() -> str:
             'color:#0B0E13;display:flex;align-items:center;justify-content:center;'
             'font-weight:800;font-size:19px">Q</div><span style="font-size:16px;'
             'font-weight:700;letter-spacing:0.12em">QORVIAN</span></div>'
-            '<div style="display:flex;flex-direction:column;gap:6px"><h1>Welcome back</h1>'
+            '<div style="display:flex;flex-direction:column;gap:6px">'
+            '<h1 style="color:#E2FF8F">Welcome back</h1>'
             '<p style="margin:0;font-size:14px;color:#A9B3C1;line-height:1.45">'
             'Enter your PIN to open your expenses.</p></div></div>')
 
