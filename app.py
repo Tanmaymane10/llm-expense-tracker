@@ -562,17 +562,20 @@ def render_plan():
     render_subscriptions()
 
     st.subheader("Cards")
-    st.caption("Statement and due days drive the bill reminders. Without a due day the bill "
-               "is due on the last day of the statement's month.")
+    st.caption("The billing cycle's last day and the due day drive the bill reminders. "
+               "Without a due day the bill is due on the last day of the month it is "
+               "generated in.")
     cards = {c["card"]: c for c in read("card_status")}
     name = st.selectbox("Card", list(cards))
     if name:
         c = cards[name]
         k = c["id"]  # per-card keys, so values don't carry over when switching cards
         c1, c2, c3 = st.columns(3)
-        sday = c1.number_input("Statement day (1-31)", 1, 31, value=c["statement_day"],
-                               step=1, key=f"sday_{k}", help="The day from your statement, "
-                               "e.g. 14. Days 29-31 fall on the month's last day when shorter.")
+        sday = c1.number_input("Last day of billing cycle (1-31)", 1, 31,
+                               value=c["statement_day"], step=1, key=f"sday_{k}",
+                               help="The last day whose spends are on a bill, e.g. 13 when the "
+                               "bill is generated on the 14th. Days 29-31 fall on the month's "
+                               "last day when shorter.")
         dday = c2.number_input("Due day (1-31)", 1, 31, value=c["due_day"], step=1,
                                key=f"dday_{k}", help="Leave empty to pay by month-end")
         limit = c3.number_input("Credit limit (₹)", 1.0, float(MAX_AMOUNT_INR),
@@ -582,11 +585,13 @@ def render_plan():
                                 key=f"monthend_{k}")
         if sday:  # recomputed on every edit, so a wrong day shows before saving
             cy = card_cycle(sday, None if month_end else dday, date.today())
-            st.caption(f"Current cycle {_short(cy['cur_start'])} – {_short(cy['cur_end'])} · "
-                       f"last statement {_short(cy['prev_end'])}, pay by "
-                       f"{_short(cy['due_date'])}")
+            nxt = cy["cur_end"] + timedelta(days=1)
+            st.caption(f"Last bill: {_short(cy['prev_start'])} – {_short(cy['prev_end'])}, "
+                       f"generated on {_short(cy['cur_start'])}, pay by "
+                       f"{_short(cy['due_date'])} · Current cycle {_short(cy['cur_start'])} – "
+                       f"{_short(cy['cur_end'])}, bill generated on {_short(nxt)}")
             if sday > 28:
-                st.caption("In shorter months the statement falls on the last day.")
+                st.caption("In shorter months the cycle ends on the month's last day.")
         if st.button("Save card", key=f"savecard_{k}"):
             try:
                 _after_write(register_card(name, sday, 0 if month_end else dday, limit))

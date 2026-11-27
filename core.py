@@ -389,8 +389,9 @@ def _month_day(y: int, m: int, day: int) -> date:
 
 def card_cycle(statement_day: int, due_day, today: date) -> dict:
     """Closed cycle [prev_start, prev_end] (prev_end = last statement date), current cycle
-    [cur_start, cur_end], and the closed statement's due date. Without a due day it is the
-    last day of the statement's month (bills are paid in full at month-end).
+    [cur_start, cur_end], and the closed statement's due date. statement_day is the last day
+    INCLUDED in a bill; the bill is generated the next day (cur_start). Without a due day the
+    bill is due on the last day of the month it is generated in (paid in full at month-end).
     due_day <= statement_day puts the due date in the month after the statement."""
     m = today.month - (today < _month_day(today.year, today.month, statement_day))
     prev_end = _month_day(today.year, m, statement_day)
@@ -400,7 +401,7 @@ def card_cycle(statement_day: int, due_day, today: date) -> dict:
             "prev_end": prev_end, "cur_start": cur_start,
             "cur_end": _month_day(today.year, m + 1, statement_day),
             "due_date": _month_day(today.year, due_m, due_day) if due_day
-            else _month_day(today.year, m, 31)}
+            else _month_day(cur_start.year, cur_start.month, 31)}
 
 
 def _card_spend(conn, card_id: int, start: date, end: date) -> float:
@@ -1316,7 +1317,9 @@ TOOLS = [
             "properties": {
                 "card_name": {"type": "string",
                               "description": "Card name as the user says it, e.g. 'Axis Flipkart'"},
-                "statement_day": {"type": "integer", "description": "1-31"},
+                "statement_day": {"type": "integer",
+                                  "description": "1-31, the last day included in a bill (the "
+                                                 "day before the bill is generated)"},
                 "due_day": {"type": "integer",
                             "description": "1-31; 0 clears it (pay by month-end)"},
                 "credit_limit": {"type": "number"},

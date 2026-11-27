@@ -225,8 +225,8 @@ def card_row(c: dict) -> str:
                   f'{c["due_date"]:%b}</div>')
     unbilled = ""
     if has_dates(c):
-        unbilled = (f'Unbilled {money(c["spent_cycle"])} since {c["prev_end"].day} '
-                    f'{c["prev_end"]:%b}')
+        bill_day = c["prev_end"] + timedelta(days=1)  # the current cycle's first day
+        unbilled = f'Unbilled {money(c["spent_cycle"])} since {bill_day.day} {bill_day:%b}'
     ink = f"color:{MUTED};" if quiet else ""
     return (
         '<div style="display:flex;align-items:center;gap:12px;background:#151A21;'

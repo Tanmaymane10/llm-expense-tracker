@@ -25,7 +25,7 @@ def test_recent_escapes_item_category_and_payment():
 def _card(**over):
     c = {"card": XSS, "statement_day": 1, "due_day": 20, "spent_cycle": 500.0,
          "limit": 10000.0, "utilisation": 25.0, "paid": False, "amount_due": 2000.0,
-         "days_to_due": 3, "due_date": date(2026, 11, 30), "prev_end": date(2026, 11, 14)}
+         "days_to_due": 3, "due_date": date(2026, 11, 30), "prev_end": date(2026, 11, 13)}
     return {**c, **over}
 
 

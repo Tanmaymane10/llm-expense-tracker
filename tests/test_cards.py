@@ -43,8 +43,12 @@ def cycle(sday, dday, today):
                               "2026-11-30")),
     (14, None, "2026-12-03", ("2026-10-15", "2026-11-14", "2026-11-15", "2026-12-14",
                               "2026-11-30")),  # past it: overdue
+    # HDFC: spends up to the 13th, bill generated on the 14th, paid by month-end
+    (13, None, "2026-11-27", ("2026-10-14", "2026-11-13", "2026-11-14", "2026-12-13",
+                              "2026-11-30")),
+    # cycle ends on the month's last day: the bill is generated next month, so due then
     (31, None, "2027-02-28", ("2027-02-01", "2027-02-28", "2027-03-01", "2027-03-31",
-                              "2027-02-28")),
+                              "2027-03-31")),
 ])
 def test_card_cycle(sday, dday, today, expected):
     assert cycle(sday, dday, today) == expected
@@ -171,6 +175,8 @@ def test_bill_paid_is_one_call_local_reply_with_no_rows(script):
     reply = turn("paid my HDFC MoneyBack bill 12000")
     assert "marked paid" in reply and len(log) == 1
     assert count_rows() == 0 and count_rows("income") == 0
+    paid = query("SELECT paid_through FROM credit_cards WHERE id = ?", (card_id(),))[0][0]
+    assert query("SELECT cycle_end FROM card_payments") == [(paid,)]  # both written
 
 
 def test_new_card_keeps_two_call_flow(script):
@@ -253,10 +259,13 @@ def test_mark_paid_records_payment_and_undo_removes_it():
     spend(c["prev_end"], 8420)
     core.register_card("HDFC MoneyBack", bill_paid=True)
     core.register_card("HDFC MoneyBack", bill_paid=True)  # twice: still one row
+    assert query("SELECT paid_through FROM credit_cards WHERE id = ?",
+                 (card_id(),)) == [(str(c["prev_end"]),)]
     rows = query("SELECT card_id, cycle_start, cycle_end, amount, paid_on FROM card_payments")
     assert rows == [(card_id(), str(c["prev_start"]), str(c["prev_end"]), 8420, str(TODAY))]
     core.set_paid_through(card_id(), None)
     assert count_rows("card_payments") == 0 and core.card_status()[0]["paid"] is False
+    assert query("SELECT paid_through FROM credit_cards WHERE id = ?", (card_id(),)) == [(None,)]
 
 
 def test_due_day_zero_clears_it_and_due_falls_back_to_month_end():
@@ -269,17 +278,26 @@ def test_due_day_zero_clears_it_and_due_falls_back_to_month_end():
     assert (s["due_day"], s["due_date"], s["days_to_due"]) == (None, D("2026-11-30"), 3)
 
 
-def test_home_mark_paid_hides_statement_line():
+def test_home_mark_paid_writes_both_and_undo_reverts_both():
     from test_app_smoke import run_app
     c = setup_due_soon()
     spend(c["prev_end"], 500)
+    core.set_paid_through(card_id(), "2020-01-01")  # an earlier value Undo must restore
+
+    def paid_through():
+        return query("SELECT paid_through FROM credit_cards WHERE id = ?", (card_id(),))[0][0]
+
     at = run_app()
     assert any("Statement due" in h.proto.body for h in at.get("html"))
     next(b for b in at.button if b.label == "Mark paid").click().run()
     next(b for b in at.button if b.label == "Yes, mark paid").click().run()
     assert not at.exception and count_rows("card_payments") == 1
+    assert paid_through() == str(c["prev_end"])
     assert not any("Statement due" in h.proto.body for h in at.get("html"))
-    assert "Undo paid" in [b.label for b in at.button]
+    next(b for b in at.button if b.label == "Undo paid").click().run()
+    assert not at.exception and count_rows("card_payments") == 0
+    assert paid_through() == "2020-01-01"
+    assert any("Statement due" in h.proto.body for h in at.get("html"))
 
 
 # ---------------------------------------------------------------- regression
