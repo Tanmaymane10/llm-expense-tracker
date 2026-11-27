@@ -235,7 +235,9 @@ def test_home_escapes_data_in_html():
                         "category": "food", "payment_method": "credit_card",
                         "card_name": "HDFC MoneyBack"}], "t")
     at = run_app()
-    bodies = " ".join(h.proto.body for h in at.get("html"))
+    bodies = " ".join(h.proto.body for h in at.get("html")
+                      if "/pwa/manifest.webmanifest" not in h.proto.body)  # trusted PWA_HEAD
+    assert sum("/pwa/manifest.webmanifest" in h.proto.body for h in at.get("html")) == 1
     assert "&lt;script&gt;alert(1)&lt;/script&gt;" in bodies and "<script" not in bodies
     assert not at.exception
 

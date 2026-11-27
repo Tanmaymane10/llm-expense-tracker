@@ -196,6 +196,30 @@ cp expenses-YYYY-MM-DD.db expenses.db
 sudo systemctl start app
 ```
 
+## Install on your phone
+
+The app adds a web manifest and home-screen icon tags to the page (before the PIN screen).
+The files live in `pwa/` and Caddy serves them at `/pwa/`. Streamlit doesn't serve that route, so
+locally the links 404, which is harmless.
+
+On the server, copy the files and add this block to the site in the Caddyfile (Caddy runs
+`handle_path` before `reverse_proxy`), then reload Caddy:
+
+```bash
+sudo mkdir -p /var/www/qorvian-pwa
+sudo cp pwa/* /var/www/qorvian-pwa/      # repeat after changing anything in pwa/
+```
+
+```
+handle_path /pwa/* {
+    root * /var/www/qorvian-pwa
+    file_server
+}
+```
+
+Then open the site on the phone: Chrome on Android offers "Install app" (or menu > Add to home
+screen); on iPhone use Safari > Share > Add to Home Screen.
+
 ## Limitations
 
 - Single user, local SQLite file; no login. Don't expose the Streamlit app to the internet as it is.

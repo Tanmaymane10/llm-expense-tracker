@@ -3,6 +3,7 @@ import time
 import uuid
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta
+from pathlib import Path
 
 import altair as alt
 import pandas as pd
@@ -38,6 +39,29 @@ from core import (
     set_paid_through,
     subscription_status,
 )
+
+# "Install as app": Caddy serves /pwa/ on the server (README). st.html is not iframed, so the
+# script writes the top-level <head>; each tag is added once, never duplicated on reruns.
+PWA_HEAD = """<script>
+(() => {
+  const tags = [
+    ["link", {rel: "manifest", href: "/pwa/manifest.webmanifest"}],
+    ["link", {rel: "apple-touch-icon", href: "/pwa/apple-touch-icon.png"}],
+    ["meta", {name: "theme-color", content: "#0B0E13"}],
+    ["meta", {name: "mobile-web-app-capable", content: "yes"}],
+    ["meta", {name: "apple-mobile-web-app-capable", content: "yes"}],
+    ["meta", {name: "apple-mobile-web-app-status-bar-style", content: "black-translucent"}],
+    ["meta", {name: "apple-mobile-web-app-title", content: "QORVIAN"}],
+  ];
+  for (const [tag, attrs] of tags) {
+    const sel = tag === "link" ? `link[rel="${attrs.rel}"]` : `meta[name="${attrs.name}"]`;
+    if (document.head.querySelector(sel)) continue;
+    const el = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+    document.head.appendChild(el);
+  }
+})();
+</script>"""
 
 THEME_CSS = """
 <style>
@@ -205,6 +229,10 @@ hr { border-color: var(--border); }
 }
 .st-key-bottomnav button span[data-testid="stIconMaterial"] { font-size: 22px; }
 .st-key-bottomnav [data-testid="stBaseButton-primary"] { color: var(--accent) !important; }
+/* PWA_HEAD: a script-only st.html would still take a flex gap (16px) above the next element */
+[data-testid="stElementContainer"]:has(> [data-testid="stHtml"] > script:only-child) {
+  display: none;
+}
 /* Home card rows: the "Set billing dates" button overlays the row's due slot (top right) */
 [class*="st-key-cardrow_"] { position: relative; gap: 0; }
 [class*="st-key-carddates_"] {
@@ -1203,8 +1231,10 @@ def render_nav():
                       type="primary" if name == active else "tertiary")
 
 
-st.set_page_config(page_title="QORVIAN", layout="centered")
+st.set_page_config(page_title="QORVIAN", layout="centered",
+                   page_icon=str(Path(__file__).with_name("pwa") / "favicon-32.png"))
 st.markdown(THEME_CSS, unsafe_allow_html=True)
+st.html(PWA_HEAD, unsafe_allow_javascript=True)  # before the PIN gate: login can install too
 require_pin()
 init_db()
 if post_due_recurring():
