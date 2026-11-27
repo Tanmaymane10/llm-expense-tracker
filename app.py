@@ -417,11 +417,11 @@ def _bill(c: dict) -> str:
     return f"{c['prev_start']:%d %b}-{c['prev_end']:%d %b} ({inr(c['amount_due'])})"
 
 
-def _mark_paid_controls(c: dict, where: str, label: str):
-    """Mark the closed statement paid (with a confirm step), and Undo right after."""
-    name, key = c["card"], f"{where}_{c['id']}"
+def _mark_paid_controls(c: dict):
+    """Plan tab: mark the closed statement paid (with a confirm step), and Undo right after."""
+    name, key = c["card"], str(c["id"])
     if c["paid"] is False:
-        if st.button(label, key=f"markpaid_{key}", type="tertiary"):
+        if st.button("Mark bill paid", key=f"markpaid_{key}"):
             st.session_state.confirm_paid = key
         if st.session_state.get("confirm_paid") == key:
             st.warning(f"Mark the {name} bill for {_bill(c)} as paid? "
@@ -599,7 +599,7 @@ def render_plan():
                 st.error(str(e))
         if c["paid"] is False:
             st.caption(f"Closed cycle {_bill(c)} unpaid.")
-        _mark_paid_controls(c, "plan", "Mark bill paid")
+        _mark_paid_controls(c)
 
     st.subheader("Income")
     st.caption("Salary, freelance or other money received. Refunds and cashback are not income.")
@@ -785,7 +785,6 @@ def render_home():
                 if not ui.has_dates(card):  # sits in the row's due slot (CSS)
                     st.button("Set billing dates in Plan", key=f"carddates_{card['id']}",
                               type="tertiary", on_click=_go, args=("Plan",))
-                _mark_paid_controls(card, "home", "Mark paid")
         st.html(ui.non_card_row(fig["non_card"]))
     for card in cards:
         if line := due_line(card, today):

@@ -247,10 +247,11 @@ def test_plan_mark_paid_needs_confirm_and_undo_restores():
     assert paid_through() == "2020-01-01"
     click(at, "Mark bill paid")
     click(at, "Yes, mark paid")
-    assert paid_through() == str(c["prev_end"])
+    assert paid_through() == str(c["prev_end"]) and count_rows("card_payments") == 1
     assert "Mark bill paid" not in [b.label for b in at.button]
     click(at, "Undo paid")
     assert paid_through() == "2020-01-01" and core.card_status()[0]["paid"] is False
+    assert count_rows("card_payments") == 0
     assert "Undo paid" not in [b.label for b in at.button]
 
 
@@ -276,28 +277,6 @@ def test_due_day_zero_clears_it_and_due_falls_back_to_month_end():
                      "VALUES ('2026-11-10 10:00', 'tv', 8420, 'shopping', ?)", (card_id(),))
     s = core.card_status(D("2026-11-27"))[0]
     assert (s["due_day"], s["due_date"], s["days_to_due"]) == (None, D("2026-11-30"), 3)
-
-
-def test_home_mark_paid_writes_both_and_undo_reverts_both():
-    from test_app_smoke import run_app
-    c = setup_due_soon()
-    spend(c["prev_end"], 500)
-    core.set_paid_through(card_id(), "2020-01-01")  # an earlier value Undo must restore
-
-    def paid_through():
-        return query("SELECT paid_through FROM credit_cards WHERE id = ?", (card_id(),))[0][0]
-
-    at = run_app()
-    assert any("Statement due" in h.proto.body for h in at.get("html"))
-    next(b for b in at.button if b.label == "Mark paid").click().run()
-    next(b for b in at.button if b.label == "Yes, mark paid").click().run()
-    assert not at.exception and count_rows("card_payments") == 1
-    assert paid_through() == str(c["prev_end"])
-    assert not any("Statement due" in h.proto.body for h in at.get("html"))
-    next(b for b in at.button if b.label == "Undo paid").click().run()
-    assert not at.exception and count_rows("card_payments") == 0
-    assert paid_through() == "2020-01-01"
-    assert any("Statement due" in h.proto.body for h in at.get("html"))
 
 
 # ---------------------------------------------------------------- regression
