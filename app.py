@@ -717,8 +717,12 @@ def quick_add_sheet(cur: dict):
     day-to-day switch follow the other fields as they change."""
     sid, opts = st.session_state.get("sheet", 0), read("payment_options")
     item = st.text_input("Item", value=cur.get("item", ""), max_chars=80, key=f"qa_item_{sid}")
+    last_amount = cur.get("amount_inr")  # chips prefill it; "+" and "+ Other" start empty
     amount = st.number_input("Amount (₹)", 0.0, float(MAX_AMOUNT_INR), step=10.0,
-                             value=float(cur.get("amount_inr", 0.0)), key=f"qa_amount_{sid}")
+                             value=None if last_amount is None else float(last_amount),
+                             placeholder="0", format="%g",  # %g: 20, 14.55 (no forced .00)
+                             key=f"qa_amount_{sid}")
+    amount_error = st.empty()  # filled on Save, so the message sits under the field
     last = core.payment_label(cur.get("payment_method"), cur.get("card_name"))
     if cur:
         st.caption(" · ".join(x for x in (f"Last time: {inr(cur['amount_inr'])}",
@@ -731,8 +735,11 @@ def quick_add_sheet(cur: dict):
     default = core.counts_by_default(category)
     counts = st.toggle("Counts toward day-to-day budget", value=default,
                        key=f"qa_d2d_{sid}_{category}")  # a new category starts at its default
-    if not st.button(f"Save {inr(amount)}", type="primary", width="stretch",
-                     key=f"qa_save_{sid}"):
+    if not st.button("Save" if amount is None else f"Save {inr(amount)}", type="primary",
+                     width="stretch", key=f"qa_save_{sid}"):
+        return
+    if amount is None:
+        amount_error.error("Enter an amount")
         return
     payment_method, card_name = opts.get(method, (None, None))
     try:

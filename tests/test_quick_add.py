@@ -108,6 +108,7 @@ def test_panel_tap_save_with_no_model_call(monkeypatch):
     assert chips.options == ["chai · ₹15", "+ Other"]
     chips.set_value("chai · ₹15").run()
     assert _widget(at.text_input, "Item").value == "chai"  # the sheet is prefilled
+    assert _widget(at.number_input, "Amount (₹)").value == 15.0  # last-used amount kept
     assert any(c.value == "Last time: ₹15 · food" for c in at.caption)
     _widget(at.number_input, "Amount (₹)").set_value(18.0).run()
     _widget(at.button, "Save ₹18").click().run()
@@ -124,7 +125,11 @@ def test_panel_other_item_and_error(monkeypatch):
     _no_model(monkeypatch)
     at = run_app()
     _widget(at.button_group, "Quick add").set_value("+ Other").run()
-    _widget(at.button, "Save ₹0").click().run()  # empty item, zero amount
+    assert _widget(at.number_input, "Amount (₹)").value is None  # empty, "0" is a hint
+    _widget(at.button, "Save").click().run()  # empty amount: not saved
+    assert [e.value for e in at.error] == ["Enter an amount"] and count_rows() == 0
+    _widget(at.number_input, "Amount (₹)").set_value(0.0).run()
+    _widget(at.button, "Save ₹0").click().run()  # zero and empty item: core validation
     assert at.error and count_rows() == 0
     _widget(at.text_input, "Item").set_value("bath towel")
     _widget(at.number_input, "Amount (₹)").set_value(504.0).run()
@@ -137,6 +142,7 @@ def test_sheet_from_nav_and_day_to_day_switch(monkeypatch):
     _no_model(monkeypatch)
     at = run_app("Usage")
     at.button(key="nav_add").click().run()  # the "+" opens the sheet on any view
+    assert _widget(at.number_input, "Amount (₹)").value is None
     _widget(at.text_input, "Item").set_value("insurance")
     _widget(at.number_input, "Amount (₹)").set_value(12000.0)
     _widget(at.button_group, "Category").set_value("health").run()
